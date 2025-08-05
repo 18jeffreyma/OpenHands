@@ -123,7 +123,7 @@ class ActionExecutionClient(Runtime):
             AgentRuntimeError: If the request fails
         """
         # Acquire the Docker lifecycle lock to prevent race conditions during container operations
-        with docker_lifecycle_lock.acquire(timeout=30.0, operation=f"{method} {url}"):
+        with docker_lifecycle_lock.acquire_reader(timeout=60.0, operation=f"{method} {url}"):
             return send_request(self.session, method, url, **kwargs)
 
     def check_if_alive(self) -> None:

@@ -403,8 +403,8 @@ class DockerRuntime(ActionExecutionClient):
             device_requests = None
 
         # Acquire the Docker lifecycle lock to prevent race conditions during container startup
-        with docker_lifecycle_lock.acquire(
-            timeout=60.0, operation=f"start_container_{self.container_name}"
+        with docker_lifecycle_lock.acquire_writer(
+            timeout=120.0, operation=f"start_container_{self.container_name}"
         ):
             try:
                 if self.runtime_container_image is None:
@@ -504,8 +504,8 @@ class DockerRuntime(ActionExecutionClient):
         close_prefix = (
             CONTAINER_NAME_PREFIX if rm_all_containers else self.container_name
         )
-        with docker_lifecycle_lock.acquire(
-            timeout=30.0, operation=f"stop_containers_{close_prefix}"
+        with docker_lifecycle_lock.acquire_writer(
+            timeout=60.0, operation=f"stop_containers_{close_prefix}"
         ):
             stop_all_containers(close_prefix)
             self._release_port_locks()
