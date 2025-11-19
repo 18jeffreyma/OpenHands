@@ -7,9 +7,13 @@ from openhands.events.action.agent import (
     AgentFinishAction,
     AgentRejectAction,
     AgentThinkAction,
+    BrowsePreviousAttemptsAction,
     ChangeAgentStateAction,
     CondensationAction,
     CondensationRequestAction,
+    ExpandPreviousAttemptAction,
+    FinishAttemptAction,
+    FinishBrowsingAttemptAction,
     LoopRecoveryAction,
     RecallAction,
     TaskTrackingAction,
@@ -50,6 +54,10 @@ actions = (
     MCPAction,
     TaskTrackingAction,
     LoopRecoveryAction,
+    FinishAttemptAction,
+    BrowsePreviousAttemptsAction,
+    ExpandPreviousAttemptAction,
+    FinishBrowsingAttemptAction,
 )
 
 ACTION_TYPE_TO_CLASS = {action_class.action: action_class for action_class in actions}  # type: ignore[attr-defined]

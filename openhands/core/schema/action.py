@@ -100,3 +100,15 @@ class ActionType(str, Enum):
 
     LOOP_RECOVERY = 'loop_recovery'
     """Recover dead loop."""
+
+    FINISH_ATTEMPT = 'finish_attempt'
+    """Signals the completion of an attempt to fulfill the user's request."""
+
+    BROWSE_PREVIOUS_ATTEMPTS = 'browse_previous_attempts'
+    """Browse information about previously submitted attempts."""
+
+    EXPAND_PREVIOUS_ATTEMPT = 'expand_previous_attempt'
+    """Expand on a previous attempt with more details."""
+
+    FINISH_BROWSING_ATTEMPT = 'finish_browsing_attempt'
+    """Signals the completion of browsing previous attempts."""

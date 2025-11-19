@@ -136,3 +136,47 @@ class RecallObservation(Observation):
             )
 
         return f'**RecallObservation**\n{", ".join(fields)}'
+
+
+@dataclass
+class FinishAttemptObservation(Observation):
+    """The output of finishing an attempt."""
+
+    observation: str = ObservationType.FINISH_ATTEMPT
+
+    @property
+    def message(self) -> str:
+        return self.content
+
+
+@dataclass
+class BrowsePreviousAttemptsObservation(Observation):
+    """The output of browsing previous attempts."""
+
+    observation: str = ObservationType.BROWSE_PREVIOUS_ATTEMPTS
+
+    @property
+    def message(self) -> str:
+        return self.content
+
+
+@dataclass
+class ExpandPreviousAttemptObservation(Observation):
+    """The output of expanding a previous attempt."""
+
+    observation: str = ObservationType.EXPAND_PREVIOUS_ATTEMPT
+
+    @property
+    def message(self) -> str:
+        return self.content
+
+
+@dataclass
+class FinishBrowsingAttemptObservation(Observation):
+    """The output of finishing browsing attempts."""
+
+    observation: str = ObservationType.FINISH_BROWSING_ATTEMPT
+
+    @property
+    def message(self) -> str:
+        return self.content

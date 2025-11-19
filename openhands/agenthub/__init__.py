@@ -9,6 +9,7 @@ from openhands.agenthub import (  # noqa: E402
     dummy_agent,
     loc_agent,
     readonly_agent,
+    rlm_agent,
     visualbrowsing_agent,
 )
 from openhands.controller.agent import Agent  # noqa: E402
@@ -21,4 +22,5 @@ __all__ = [
     'visualbrowsing_agent',
     'readonly_agent',
     'loc_agent',
+    'rlm_agent',
 ]

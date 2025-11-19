@@ -28,9 +28,13 @@ from openhands.events.action import (
     ActionConfirmationStatus,
     AgentThinkAction,
     BrowseInteractiveAction,
+    BrowsePreviousAttemptsAction,
     BrowseURLAction,
     CmdRunAction,
+    ExpandPreviousAttemptAction,
     FileEditAction,
+    FinishAttemptAction,
+    FinishBrowsingAttemptAction,
     FileReadAction,
     FileWriteAction,
     IPythonRunCellAction,
@@ -40,9 +44,13 @@ from openhands.events.action.mcp import MCPAction
 from openhands.events.event import Event
 from openhands.events.observation import (
     AgentThinkObservation,
+    BrowsePreviousAttemptsObservation,
     CmdOutputObservation,
     ErrorObservation,
+    ExpandPreviousAttemptObservation,
     FileReadObservation,
+    FinishAttemptObservation,
+    FinishBrowsingAttemptObservation,
     NullObservation,
     Observation,
     TaskTrackingObservation,
@@ -990,6 +998,20 @@ fi
                         task_list=[],
                         content=f'Unknown command: {action.command}',
                     )
+            elif isinstance(action, FinishAttemptAction):
+                return FinishAttemptObservation(content=action.message)
+            elif isinstance(action, BrowsePreviousAttemptsAction):
+                # Return basic observation - agent will populate with attempt data
+                return BrowsePreviousAttemptsObservation(
+                    content='Browsing previous attempts...'
+                )
+            elif isinstance(action, ExpandPreviousAttemptAction):
+                # Return basic observation - agent will populate with attempt data
+                return ExpandPreviousAttemptObservation(
+                    content=f'Expanding attempt {action.attempt_id}...'
+                )
+            elif isinstance(action, FinishBrowsingAttemptAction):
+                return FinishBrowsingAttemptObservation(content=action.message)
             return NullObservation('')
         if (
             hasattr(action, 'confirmation_state')

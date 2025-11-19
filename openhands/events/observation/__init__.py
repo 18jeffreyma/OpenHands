@@ -3,6 +3,10 @@ from openhands.events.observation.agent import (
     AgentCondensationObservation,
     AgentStateChangedObservation,
     AgentThinkObservation,
+    BrowsePreviousAttemptsObservation,
+    ExpandPreviousAttemptObservation,
+    FinishAttemptObservation,
+    FinishBrowsingAttemptObservation,
     RecallObservation,
 )
 from openhands.events.observation.browse import BrowserOutputObservation
@@ -52,4 +56,8 @@ __all__ = [
     'MCPObservation',
     'FileDownloadObservation',
     'TaskTrackingObservation',
+    'FinishAttemptObservation',
+    'BrowsePreviousAttemptsObservation',
+    'ExpandPreviousAttemptObservation',
+    'FinishBrowsingAttemptObservation',
 ]

@@ -6,6 +6,10 @@ from openhands.events.observation.agent import (
     AgentCondensationObservation,
     AgentStateChangedObservation,
     AgentThinkObservation,
+    BrowsePreviousAttemptsObservation,
+    ExpandPreviousAttemptObservation,
+    FinishAttemptObservation,
+    FinishBrowsingAttemptObservation,
     MicroagentKnowledge,
     RecallObservation,
 )
@@ -53,6 +57,10 @@ observations = (
     FileDownloadObservation,
     TaskTrackingObservation,
     LoopDetectionObservation,
+    FinishAttemptObservation,
+    BrowsePreviousAttemptsObservation,
+    ExpandPreviousAttemptObservation,
+    FinishBrowsingAttemptObservation,
 )
 
 OBSERVATION_TYPE_TO_CLASS = {

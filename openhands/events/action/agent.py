@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 from openhands.core.schema import ActionType
 from openhands.events.action.action import Action
@@ -240,3 +240,81 @@ class LoopRecoveryAction(Action):
 
     option: int = 1
     action: str = ActionType.LOOP_RECOVERY
+
+
+@dataclass
+class FinishAttemptAction(Action):
+    """An action where the agent finishes an attempt to fulfill the user's request.
+
+    Attributes:
+        message (str): Summary of work done during the attempt.
+        thought (str): The agent's explanation of its actions.
+        action (str): The action type, namely ActionType.FINISH_ATTEMPT.
+    """
+
+    message: str = ''
+    thought: str = ''
+    action: str = ActionType.FINISH_ATTEMPT
+    runnable: ClassVar[bool] = False
+
+    @property
+    def final_message(self) -> str:
+        return self.message
+
+
+@dataclass
+class BrowsePreviousAttemptsAction(Action):
+    """An action where the agent browses information about previously submitted attempts.
+
+    Attributes:
+        thought (str): The agent's explanation of its actions.
+        action (str): The action type, namely ActionType.BROWSE_PREVIOUS_ATTEMPTS.
+    """
+
+    thought: str = ''
+    action: str = ActionType.BROWSE_PREVIOUS_ATTEMPTS
+    runnable: ClassVar[bool] = False
+
+    @property
+    def message(self) -> str:
+        return 'Browsing previous attempts...'
+
+
+@dataclass
+class ExpandPreviousAttemptAction(Action):
+    """An action where the agent expands on a previous attempt with more details.
+
+    Attributes:
+        attempt_id (str): The unique identifier of the previous attempt to expand upon.
+        thought (str): The agent's explanation of its actions.
+        action (str): The action type, namely ActionType.EXPAND_PREVIOUS_ATTEMPT.
+    """
+
+    attempt_id: str = ''
+    thought: str = ''
+    action: str = ActionType.EXPAND_PREVIOUS_ATTEMPT
+    runnable: ClassVar[bool] = False
+
+    @property
+    def message(self) -> str:
+        return f'Expanding previous attempt: {self.attempt_id}'
+
+
+@dataclass
+class FinishBrowsingAttemptAction(Action):
+    """An action where the agent finishes browsing previous attempts.
+
+    Attributes:
+        message (str): Summary of takeaways from browsing previous attempts and next steps.
+        thought (str): The agent's explanation of its actions.
+        action (str): The action type, namely ActionType.FINISH_BROWSING_ATTEMPT.
+    """
+
+    message: str = ''
+    thought: str = ''
+    action: str = ActionType.FINISH_BROWSING_ATTEMPT
+    runnable: ClassVar[bool] = False
+
+    @property
+    def final_message(self) -> str:
+        return self.message

@@ -61,3 +61,15 @@ class ObservationType(str, Enum):
 
     LOOP_DETECTION = 'loop_detection'
     """Results of a dead-loop detection"""
+
+    FINISH_ATTEMPT = 'finish_attempt'
+    """Result of finishing an attempt"""
+
+    BROWSE_PREVIOUS_ATTEMPTS = 'browse_previous_attempts'
+    """Result of browsing previous attempts"""
+
+    EXPAND_PREVIOUS_ATTEMPT = 'expand_previous_attempt'
+    """Result of expanding a previous attempt"""
+
+    FINISH_BROWSING_ATTEMPT = 'finish_browsing_attempt'
+    """Result of finishing browsing attempts"""

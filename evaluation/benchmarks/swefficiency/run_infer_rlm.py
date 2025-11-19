@@ -17,9 +17,6 @@ from evaluation.benchmarks.swe_bench.binary_patch_utils import (
     remove_binary_diffs,
     remove_binary_files_from_git,
 )
-from evaluation.benchmarks.swe_bench.resource.mapping import (
-    get_instance_resource_factor,
-)
 from evaluation.utils.shared import (
     EvalException,
     EvalMetadata,
@@ -91,7 +88,7 @@ def get_instruction(instance: pd.Series, metadata: EvalMetadata) -> MessageActio
 /workspace/{workspace_dir_name}
 </uploaded_files>
 
-I’ve uploaded a python code repository in the directory workspace_dir_name. Consider the following performance workload and `workload()` function showing an specific usage of the repository:
+I've uploaded a python code repository in the directory workspace_dir_name. Consider the following performance workload and `workload()` function showing an specific usage of the repository:
 <performance_workload>
 {instance.workload}
 </performance_workload>
@@ -190,6 +187,12 @@ def get_config(
             metadata.llm_config, metadata.eval_output_dir, instance['instance_id']
         )
     )
+
+    # Get RLM-specific configuration
+    rlm_max_iterations = int(os.environ.get('RLM_MAX_ITERATIONS', '3'))
+
+    from openhands.core.config.extended_config import ExtendedConfig
+
     agent_config = AgentConfig(
         enable_jupyter=False,
         enable_browsing=RUN_WITH_BROWSING,
@@ -197,7 +200,9 @@ def get_config(
         enable_mcp=False,
         condenser=metadata.condenser_config,
         enable_prompt_extensions=False,
+        extended=ExtendedConfig({'rlm_max_iterations': rlm_max_iterations}),
     )
+
     config.set_agent_config(agent_config)
     return config
 
@@ -581,15 +586,19 @@ def process_instance(
 
             message_action = get_instruction(instance, metadata)
 
+            # Get the fake user response function for the agent
+            fake_user_response_fn = AGENT_CLS_TO_FAKE_USER_RESPONSE_FN.get(
+                metadata.agent_class,
+                rlm_user_response,  # Default to RLM user response
+            )
+
             # Here's how you can run the agent (similar to the `main` function) and get the final task state
             state: State | None = asyncio.run(
                 run_controller(
                     config=config,
                     initial_user_action=message_action,
                     runtime=runtime,
-                    fake_user_response_fn=AGENT_CLS_TO_FAKE_USER_RESPONSE_FN[
-                        metadata.agent_class
-                    ],
+                    fake_user_response_fn=fake_user_response_fn,
                 )
             )
 
@@ -967,3 +976,4 @@ if __name__ == '__main__':
         logger.info(
             f'Done! Total {len(added_instance_ids)} instances added to {output_file}'
         )
+
