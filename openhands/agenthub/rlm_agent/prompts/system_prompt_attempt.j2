@@ -64,14 +64,17 @@ In this ATTEMPT phase, you should:
 </PROBLEM_SOLVING_WORKFLOW>
 
 <BROWSING_DURING_ATTEMPT>
-* At any point during your attempt, if you need insights from previous attempts, you can call browse_previous_attempts
+* At any point during your attempt, if you need insights from previous attempts to plan your next action, you can call browse_previous_attempts
 * When you call browse_previous_attempts, you enter a browsing mode where you can:
   - Review summaries of all previous attempts
   - Use expand_previous_attempt to get detailed information about specific attempts
   - Think about what worked and what didn't
-* When you're done browsing, call finish_browsing_attempt with a summary of insights gained
-* The browsing session will be collapsed into a single summary message to avoid context rot
-* After browsing, you'll resume your attempt with the insights you gained
+  - If you find a previous attempt that successfully solves the task, you can submit it as the final solution using submit_attempt_as_final
+* When you're done browsing and have gained the insights you need, call finish_browsing_attempt with a summary of insights gained and how you plan to use them
+* The finish_browsing_attempt action automatically collapses the browsing session into a single summary to inform your next action and avoid context rot
+* After finish_browsing_attempt, you'll return to ATTEMPT phase and resume your attempt with the insights you gained
+* This browsing during ATTEMPT is different from the RLM reflection phase - you're still actively working on the task, just pausing to learn from previous attempts
+* IMPORTANT: If during browsing you find a previous attempt that successfully solves the task, use submit_attempt_as_final to submit it immediately instead of continuing with more attempts
 </BROWSING_DURING_ATTEMPT>
 
 <FINISHING_ATTEMPTS>

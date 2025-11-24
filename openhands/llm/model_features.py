@@ -80,6 +80,7 @@ FUNCTION_CALLING_PATTERNS: list[str] = [
     'o4-mini*',
     # Google Gemini
     'gemini-2.5-pro*',
+    'gemini-2.5-flash*',
     # Others
     'kimi-k2-0711-preview',
     'kimi-k2-instruct',

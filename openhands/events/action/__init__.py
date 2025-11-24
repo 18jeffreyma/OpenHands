@@ -15,6 +15,7 @@ from openhands.events.action.agent import (
     FinishBrowsingAttemptAction,
     LoopRecoveryAction,
     RecallAction,
+    SubmitAttemptAsFinalAction,
     TaskTrackingAction,
 )
 from openhands.events.action.browse import BrowseInteractiveAction, BrowseURLAction
@@ -55,4 +56,5 @@ __all__ = [
     'BrowsePreviousAttemptsAction',
     'ExpandPreviousAttemptAction',
     'FinishBrowsingAttemptAction',
+    'SubmitAttemptAsFinalAction',
 ]

@@ -4,10 +4,19 @@ This module provides functionality to store, retrieve, and summarize attempts
 made by the RLM agent during its execution.
 """
 
+import os
+import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from jinja2 import Environment, FileSystemLoader
+
+from openhands.core.logger import openhands_logger as logger
+from openhands.core.message import Message, TextContent
 from openhands.events.event import Event
+
+if TYPE_CHECKING:
+    from openhands.llm.llm import LLM
 
 
 @dataclass
@@ -28,6 +37,9 @@ class Attempt:
 
     summary: str = ''
     """Summary of what was done in this attempt."""
+
+    patch: str = ''
+    """Git patch/diff representing the changes made in this attempt."""
 
     events: list[Event] = field(default_factory=list)
     """Events that occurred during this attempt."""
@@ -66,12 +78,15 @@ class AttemptStorage:
         self.current_attempt = attempt
         return attempt
 
-    def finish_attempt(self, end_event_id: int, summary: str = '') -> None:
+    def finish_attempt(
+        self, end_event_id: int, summary: str = '', patch: str = ''
+    ) -> None:
         """Finish the current attempt.
 
         Args:
             end_event_id: The event ID where this attempt ends.
             summary: Optional summary of what was done in this attempt.
+            patch: Optional git patch/diff representing the changes made in this attempt.
         """
         if self.current_attempt is None:
             return
@@ -79,6 +94,8 @@ class AttemptStorage:
         self.current_attempt.end_event_id = end_event_id
         if summary:
             self.current_attempt.summary = summary
+        if patch:
+            self.current_attempt.patch = patch
         self.current_attempt = None
 
     def add_event_to_current_attempt(self, event: Event) -> None:
@@ -143,10 +160,18 @@ class AttemptStorage:
             )
         return summaries
 
-    def get_best_attempt(self) -> Attempt | None:
-        """Get the best attempt based on some heuristic.
+    def get_best_attempt(
+        self, llm: 'LLM | None' = None, prompt_dir: str | None = None
+    ) -> Attempt | None:
+        """Get the best attempt based on LLM reflection or heuristic fallback.
 
-        Currently returns the most recent completed attempt.
+        If an LLM is provided, uses LLM reflection to evaluate which attempt is best
+        based on summaries, phase, and other metadata. Otherwise, falls back to
+        returning the most recent completed attempt.
+
+        Args:
+            llm: Optional LLM instance to use for reflection. If None, uses heuristic.
+            prompt_dir: Optional directory containing prompt templates. Required if using LLM reflection.
 
         Returns:
             The best Attempt object, or None if no attempts exist.
@@ -157,8 +182,113 @@ class AttemptStorage:
         if not completed_attempts:
             return None
 
-        # Return the most recent completed attempt
-        return max(completed_attempts, key=lambda a: a.end_event_id or 0)
+        # If no LLM provided, use heuristic fallback
+        if llm is None:
+            # Return the most recent completed attempt
+            return max(completed_attempts, key=lambda a: a.end_event_id or 0)
+
+        # Use LLM reflection to determine the best attempt
+        if prompt_dir is None:
+            logger.warning(
+                'prompt_dir not provided, cannot use LLM reflection. '
+                'Falling back to heuristic.'
+            )
+            return max(completed_attempts, key=lambda a: a.end_event_id or 0)
+
+        try:
+            return self._get_best_attempt_with_reflection(
+                completed_attempts, llm, prompt_dir
+            )
+        except Exception as e:
+            logger.warning(
+                f'Failed to use LLM reflection for best attempt selection: {e}. '
+                'Falling back to heuristic.'
+            )
+            # Fallback to heuristic
+            return max(completed_attempts, key=lambda a: a.end_event_id or 0)
+
+    def _get_best_attempt_with_reflection(
+        self, attempts: list[Attempt], llm: 'LLM', prompt_dir: str
+    ) -> Attempt | None:
+        """Use LLM reflection to determine the best attempt.
+
+        Args:
+            attempts: List of completed attempts to evaluate.
+            llm: LLM instance to use for reflection.
+            prompt_dir: Directory containing prompt templates.
+
+        Returns:
+            The best Attempt object according to LLM reflection.
+        """
+        if not attempts:
+            return None
+
+        # If only one attempt, return it
+        if len(attempts) == 1:
+            return attempts[0]
+
+        # Load the reflection prompt template
+        env = Environment(loader=FileSystemLoader(prompt_dir))
+        try:
+            template = env.get_template('reflection_prompt.j2')
+        except Exception as e:
+            logger.error(f'Failed to load reflection_prompt.j2 template: {e}')
+            raise
+
+        # Format attempts data for the template
+        attempts_data = []
+        for attempt in attempts:
+            attempts_data.append(
+                {
+                    'attempt_id': attempt.attempt_id,
+                    'phase': attempt.phase,
+                    'summary': attempt.summary or 'No summary available',
+                    'num_events': len(attempt.events),
+                    'start_event_id': attempt.start_event_id,
+                    'end_event_id': attempt.end_event_id or 'ongoing',
+                }
+            )
+
+        # Render the reflection prompt using the template
+        reflection_prompt = template.render(attempts=attempts_data).strip()
+
+        # Call LLM for reflection
+        messages = [
+            Message(
+                role='user',
+                content=[TextContent(text=reflection_prompt)],
+            )
+        ]
+
+        try:
+            response = llm.completion(messages=messages)
+            # Extract the attempt ID from the response
+            response_text = response.choices[0].message.content.strip()
+
+            # Try to extract attempt ID from response
+            # Look for patterns like "attempt-1", "attempt-2", etc.
+            attempt_id_match = re.search(r'attempt-(\d+)', response_text)
+            if attempt_id_match:
+                attempt_id = f"attempt-{attempt_id_match.group(1)}"
+                # Find the attempt with this ID
+                for attempt in attempts:
+                    if attempt.attempt_id == attempt_id:
+                        logger.info(
+                            f'LLM reflection selected {attempt_id} as the best attempt'
+                        )
+                        return attempt
+
+            # If we couldn't parse the response, log and fall back
+            logger.warning(
+                f'Could not parse attempt ID from LLM response: {response_text}. '
+                'Falling back to heuristic.'
+            )
+            return max(attempts, key=lambda a: a.end_event_id or 0)
+
+        except Exception as e:
+            logger.error(f'Error during LLM reflection: {e}')
+            # Fallback to heuristic
+            return max(attempts, key=lambda a: a.end_event_id or 0)
 
 
 

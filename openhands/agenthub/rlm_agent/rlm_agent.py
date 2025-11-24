@@ -38,6 +38,9 @@ from openhands.agenthub.rlm_agent.tools.expand_previous_attempt import (
 from openhands.agenthub.rlm_agent.tools.finish_browsing_attempts import (
     FinishBrowsingAttemptTool,
 )
+from openhands.agenthub.rlm_agent.tools.submit_attempt_as_final import (
+    SubmitAttemptAsFinalTool,
+)
 from openhands.controller.agent import Agent
 from openhands.controller.state.state import State
 from openhands.core.config import AgentConfig
@@ -47,15 +50,21 @@ from openhands.events.action import (
     Action,
     AgentFinishAction,
     BrowsePreviousAttemptsAction,
+    CmdRunAction,
     ExpandPreviousAttemptAction,
     FinishAttemptAction,
     FinishBrowsingAttemptAction,
     MessageAction,
+    RecallAction,
+    SubmitAttemptAsFinalAction,
 )
 from openhands.events.action.agent import CondensationAction
 from openhands.events.observation import (
     BrowsePreviousAttemptsObservation,
+    CmdOutputObservation,
     ExpandPreviousAttemptObservation,
+    FinishAttemptObservation,
+    SubmitAttemptAsFinalObservation,
 )
 from openhands.events.event import Event
 from openhands.llm.llm_utils import check_tools
@@ -94,6 +103,11 @@ class RLMAgent(Agent):
 
     2. RLM phase: The agent reviews previous attempts, expands on them, reasons about them,
        and creates a plan for the next attempt. When done, it calls finish_browsing_attempt.
+
+    3. During ATTEMPT phase the agent can also browse previous attempts to get insights and plan the next action.
+       The agent calls browse_previous_attempts to browse previous attempts and expand_previous_attempt to get more details about the attempts.
+       The agent can then call finish_browsing_attempt to finish the browsing session and return to the ATTEMPT phase.
+       The finish_browsing_attempt action collapses the browsing session into a single summary to inform next action.
 
     The agent alternates between these phases for a predefined number of iterations,
     then returns the best solution found.
@@ -136,13 +150,23 @@ class RLMAgent(Agent):
         rlm_max_iterations = None
         if hasattr(config, 'extended') and config.extended:
             try:
-                rlm_max_iterations = config.extended['rlm_max_iterations']
+                rlm_max_iterations = config.extended.get('rlm_max_iterations')
             except (KeyError, AttributeError):
                 pass
         if rlm_max_iterations is None:
             rlm_max_iterations = int(os.environ.get('RLM_MAX_ITERATIONS', '3'))
         self.max_iterations: int = rlm_max_iterations
         self.current_iteration: int = 0
+
+        # Get patch extraction and application commands from extended config
+        # These will be read dynamically from config.extended when needed
+        self._extract_patch_cmd: str | None = None
+        self._apply_patch_cmd: str | None = None
+
+        # Track state for patch extraction
+        self._pending_patch_extraction: tuple[int, int] | None = None  # (finish_attempt_event_id, extract_cmd_action_id)
+        self._pending_patch_application: bool = False
+        self._apply_patch_action_id: int | None = None
 
     @property
     def prompt_manager(self) -> PromptManager:
@@ -162,16 +186,8 @@ class RLMAgent(Agent):
             return 'system_prompt_rlm.j2'
 
     def _get_tools(self) -> list['ChatCompletionToolParam']:
-        # For these models, we use short tool descriptions ( < 1024 tokens)
-        # to avoid hitting the OpenAI token limit for tool descriptions.
-        SHORT_TOOL_DESCRIPTION_LLM_SUBSTRS = ['gpt-4', 'o3', 'o1', 'o4']
-
+        # TODO: Don't use short description for cmd run tool.
         use_short_tool_desc = False
-        if self.llm is not None:
-            use_short_tool_desc = any(
-                model_substr in self.llm.config.model
-                for model_substr in SHORT_TOOL_DESCRIPTION_LLM_SUBSTRS
-            )
 
         tools = []
 
@@ -182,12 +198,14 @@ class RLMAgent(Agent):
                 tools.append(BrowsePreviousAttemptsTool)
                 tools.append(ExpandPreviousAttemptTool)
                 tools.append(FinishBrowsingAttemptTool)
+                tools.append(SubmitAttemptAsFinalTool)  # Can submit attempt as final during browsing
                 if self.config.enable_think:
                     tools.append(ThinkTool)
             else:
                 # In ATTEMPT phase, include all standard tools plus finish_attempt and browse_previous_attempts
                 if self.config.enable_cmd:
-                    tools.append(create_cmd_run_tool(use_short_description=use_short_tool_desc))
+
+                    tools.append(create_cmd_run_tool(use_short_description=False))
                 if self.config.enable_think:
                     tools.append(ThinkTool)
                 if self.config.enable_browsing:
@@ -220,6 +238,7 @@ class RLMAgent(Agent):
             tools.append(BrowsePreviousAttemptsTool)
             tools.append(ExpandPreviousAttemptTool)
             tools.append(FinishBrowsingAttemptTool)
+            tools.append(SubmitAttemptAsFinalTool)  # Can submit attempt as final in RLM phase
             # Also allow thinking
             if self.config.enable_think:
                 tools.append(ThinkTool)
@@ -237,6 +256,11 @@ class RLMAgent(Agent):
         self.browsing_state = BrowsingState.NONE
         self.browsing_start_event_id = None
         self.current_iteration = 0
+        self._pending_patch_extraction = None
+        self._pending_patch_application = False
+        self._apply_patch_action_id = None
+        self._pending_patch_extraction = None
+        self._pending_patch_application = False
 
     def _transition_to_next_phase(self) -> None:
         """Transition to the next phase."""
@@ -308,6 +332,45 @@ class RLMAgent(Agent):
 
         return None
 
+    def _create_message_action(
+        self, content: str, wait_for_response: bool = False
+    ) -> MessageAction:
+        """Create and validate a MessageAction to ensure content is never None.
+
+        This prevents errors when the controller creates RecallAction from MessageAction.
+        """
+        # Ensure content is always a valid string (not None)
+        if content is None:
+            logger.warning('MessageAction content is None, using empty string')
+            content = ''
+        elif not isinstance(content, str):
+            content = str(content)
+        return MessageAction(content=content, wait_for_response=wait_for_response)
+
+    def _validate_action(self, action: 'Action') -> 'Action':
+        """Validate and fix action to prevent serialization errors.
+
+        Ensures MessageAction has valid content and RecallAction has valid query.
+        This prevents errors when the controller creates RecallAction from MessageAction.
+        """
+        if isinstance(action, MessageAction):
+            # Ensure content is always a valid string (not None)
+            # This prevents errors when controller creates RecallAction(query=action.content)
+            if action.content is None:
+                logger.warning(f'MessageAction with None content detected, fixing to empty string')
+                action.content = ''
+            elif not isinstance(action.content, str):
+                action.content = str(action.content)
+        elif isinstance(action, RecallAction):
+            # Ensure query is always a valid string (not None)
+            # This prevents errors when serializing RecallAction.message property
+            if action.query is None:
+                logger.warning(f'RecallAction with None query detected, fixing to empty string')
+                action.query = ''
+            elif not isinstance(action.query, str):
+                action.query = str(action.query)
+        return action
+
     def step(self, state: State) -> 'Action':
         """Performs one step using the RLM Agent.
 
@@ -321,12 +384,67 @@ class RLMAgent(Agent):
         """
         # Continue with pending actions if any
         if self.pending_actions:
-            return self.pending_actions.popleft()
+            action = self.pending_actions.popleft()
+            return self._validate_action(action)
 
         # Check if we should finish
         if self._should_finish() and self.current_phase == Phase.RLM:
-            best_attempt = self.attempt_storage.get_best_attempt()
-            if best_attempt:
+            # Check if we need to apply the best attempt's patch
+            if self._pending_patch_application:
+                # Check if patch application is complete
+                for event in reversed(state.history[-5:]):
+                    if (
+                        isinstance(event, CmdOutputObservation)
+                        and hasattr(self, '_apply_patch_action_id')
+                        and event.cause == self._apply_patch_action_id
+                    ):
+                        # Patch application completed
+                        self._pending_patch_application = False
+                        prompt_dir = os.path.join(
+                            os.path.dirname(__file__), 'prompts'
+                        )
+                        best_attempt = self.attempt_storage.get_best_attempt(
+                            llm=self.llm, prompt_dir=prompt_dir
+                        )
+                        if best_attempt:
+                            return AgentFinishAction(
+                                final_thought=f'Completed {self.current_iteration} iterations. Best attempt: {best_attempt.attempt_id}. {best_attempt.summary}. Applied patch successfully.'
+                            )
+                        else:
+                            return AgentFinishAction(
+                                final_thought=f'Completed {self.current_iteration} iterations. No completed attempts found.'
+                            )
+                # Still waiting for patch application
+                return self._create_message_action(
+                    content='Applying best attempt patch...',
+                    wait_for_response=False,
+                )
+
+            # Apply best attempt's patch if command is configured
+            prompt_dir = os.path.join(os.path.dirname(__file__), 'prompts')
+            best_attempt = self.attempt_storage.get_best_attempt(
+                llm=self.llm, prompt_dir=prompt_dir
+            )
+            # Read apply command from config (may have been set after agent initialization)
+            apply_cmd = None
+            if hasattr(self.config, 'extended') and self.config.extended:
+                extended_dict = self.config.extended.model_dump()
+                apply_cmd = extended_dict.get('rlm_apply_patch_cmd')
+            if best_attempt and best_attempt.patch and apply_cmd:
+                # Apply the patch - use base64 encoding to avoid shell escaping issues
+                import base64
+                patch_b64 = base64.b64encode(best_attempt.patch.encode()).decode()
+                apply_cmd_final = apply_cmd.replace('{patch}', patch_b64)
+                apply_action = CmdRunAction(command=apply_cmd_final)
+                apply_action.set_hard_timeout(600)
+                self.pending_actions.append(apply_action)
+                self._pending_patch_application = True
+                self._apply_patch_action_id = apply_action.id
+                logger.info(
+                    f'Applying patch from best attempt {best_attempt.attempt_id}'
+                )
+                return apply_action
+            elif best_attempt:
                 return AgentFinishAction(
                     final_thought=f'Completed {self.current_iteration} iterations. Best attempt: {best_attempt.attempt_id}. {best_attempt.summary}'
                 )
@@ -337,7 +455,11 @@ class RLMAgent(Agent):
 
         # if we're done, go back
         latest_user_message = state.get_last_user_message()
-        if latest_user_message and latest_user_message.content.strip() == '/exit':
+        if (
+            latest_user_message
+            and latest_user_message.content
+            and latest_user_message.content.strip() == '/exit'
+        ):
             return AgentFinishAction()
 
         # Handle phase-specific actions and browsing state
@@ -360,6 +482,62 @@ class RLMAgent(Agent):
 
             # Check if we finished browsing
             if self.browsing_state == BrowsingState.BROWSING:
+                # Check if agent submitted an attempt as final during browsing
+                for event in reversed(state.history[-5:]):  # Check last 5 events
+                    if isinstance(event, SubmitAttemptAsFinalAction):
+                        # Get the attempt to submit
+                        attempt = self.attempt_storage.get_attempt(event.attempt_id)
+                        if attempt:
+                            logger.info(f'Submitting attempt {event.attempt_id} as final solution')
+                            # Check if we need to apply the attempt's patch
+                            if self._pending_patch_application:
+                                # Check if patch application is complete
+                                for obs_event in reversed(state.history[-5:]):
+                                    if (
+                                        isinstance(obs_event, CmdOutputObservation)
+                                        and hasattr(self, '_apply_patch_action_id')
+                                        and obs_event.cause == self._apply_patch_action_id
+                                    ):
+                                        # Patch application completed
+                                        self._pending_patch_application = False
+                                        return AgentFinishAction(
+                                            final_thought=f'Submitted attempt {event.attempt_id} as final solution. {event.message}. Applied patch successfully.'
+                                        )
+                                # Still waiting for patch application
+                                return self._create_message_action(
+                                    content='Applying patch for submitted attempt...',
+                                    wait_for_response=False,
+                                )
+
+                            # Apply attempt's patch if command is configured
+                            apply_cmd = None
+                            if hasattr(self.config, 'extended') and self.config.extended:
+                                extended_dict = self.config.extended.model_dump()
+                                apply_cmd = extended_dict.get('rlm_apply_patch_cmd')
+                            if attempt.patch and apply_cmd:
+                                # Apply the patch - use base64 encoding to avoid shell escaping issues
+                                import base64
+                                patch_b64 = base64.b64encode(attempt.patch.encode()).decode()
+                                apply_cmd_final = apply_cmd.replace('{patch}', patch_b64)
+                                apply_action = CmdRunAction(command=apply_cmd_final)
+                                apply_action.set_hard_timeout(600)
+                                self.pending_actions.append(apply_action)
+                                self._pending_patch_application = True
+                                self._apply_patch_action_id = apply_action.id
+                                logger.info(f'Applying patch from submitted attempt {event.attempt_id}')
+                                return apply_action
+                            else:
+                                # No patch to apply, finish immediately
+                                return AgentFinishAction(
+                                    final_thought=f'Submitted attempt {event.attempt_id} as final solution. {event.message}'
+                                )
+                        else:
+                            logger.warning(f'Attempt {event.attempt_id} not found, cannot submit as final')
+                            return self._create_message_action(
+                                content=f'Attempt {event.attempt_id} not found. Cannot submit as final.',
+                                wait_for_response=False,
+                            )
+
                 for event in reversed(state.history[-5:]):  # Check last 5 events
                     if isinstance(event, FinishBrowsingAttemptAction):
                         # Collapse browsing session
@@ -375,27 +553,130 @@ class RLMAgent(Agent):
                             return condensation_action
                         else:
                             # If no events to collapse, just return a message
-                            return MessageAction(
-                                content=f'Browsing session completed. Insights: {event.message}. Resuming attempt.',
+                            insights = event.message if event.message else 'No specific insights'
+                            return self._create_message_action(
+                                content=f'Browsing session completed. Insights: {insights}. Resuming attempt.',
                                 wait_for_response=False,
                             )
 
             # Check if we just finished an attempt
             for event in reversed(state.history[-10:]):  # Check last 10 events
                 if isinstance(event, FinishAttemptAction):
-                    # Store the attempt
-                    if self.attempt_storage.current_attempt:
-                        self.attempt_storage.finish_attempt(
-                            end_event_id=event.id, summary=event.message
+                    # Check if we've already processed this finish_attempt
+                    if self._pending_patch_extraction is not None:
+                        if self._pending_patch_extraction[0] == event.id:
+                            # We're waiting for patch extraction, check if it's done
+                            for obs_event in reversed(state.history[-5:]):
+                                if (
+                                    isinstance(obs_event, CmdOutputObservation)
+                                    and obs_event.cause == self._pending_patch_extraction[1]
+                                ):
+                                    # Patch extraction completed, store it
+                                    patch = obs_event.content
+                                    if self.attempt_storage.current_attempt:
+                                        self.attempt_storage.finish_attempt(
+                                            end_event_id=event.id,
+                                            summary=event.message,
+                                            patch=patch,
+                                        )
+                                    self._pending_patch_extraction = None
+                                    # Transition to RLM phase for reflection
+                                    self._transition_to_next_phase()
+                                    return self._create_message_action(
+                                        content=f'Attempt completed. Transitioning to RLM reflection phase to review and plan next attempt.',
+                                        wait_for_response=False,
+                                    )
+                            # Still waiting for patch extraction
+                            return self._create_message_action(
+                                content='Extracting patch for attempt...',
+                                wait_for_response=False,
+                            )
+
+                    # First time seeing this finish_attempt, extract patch if command is configured
+                    # Read command from config (may have been set after agent initialization)
+                    extract_cmd = None
+                    if hasattr(self.config, 'extended') and self.config.extended:
+                        extended_dict = self.config.extended.model_dump()
+                        extract_cmd = extended_dict.get('rlm_extract_patch_cmd')
+                    if extract_cmd and self.attempt_storage.current_attempt:
+                        # Queue patch extraction command
+                        extract_action = CmdRunAction(command=extract_cmd)
+                        extract_action.set_hard_timeout(600)
+                        self.pending_actions.append(extract_action)
+                        self._pending_patch_extraction = (event.id, extract_action.id)
+                        logger.info(
+                            f'Extracting patch for attempt {self.attempt_storage.current_attempt.attempt_id}'
                         )
-                    # Transition to RLM phase for reflection
-                    self._transition_to_next_phase()
-                    # Add a message about transitioning
-                    return MessageAction(
-                        content=f'Attempt completed. Transitioning to RLM reflection phase to review and plan next attempt.',
-                        wait_for_response=False,
-                    )
+                        return extract_action
+                    else:
+                        # No patch extraction command configured, finish normally
+                        if self.attempt_storage.current_attempt:
+                            self.attempt_storage.finish_attempt(
+                                end_event_id=event.id, summary=event.message
+                            )
+                        # Transition to RLM phase for reflection
+                        self._transition_to_next_phase()
+                        return self._create_message_action(
+                            content=f'Attempt completed. Transitioning to RLM reflection phase to review and plan next attempt.',
+                            wait_for_response=False,
+                        )
         else:
+            # RLM phase - check if agent submitted an attempt as final
+            for event in reversed(state.history[-10:]):  # Check last 10 events
+                if isinstance(event, SubmitAttemptAsFinalAction):
+                    # Get the attempt to submit
+                    attempt = self.attempt_storage.get_attempt(event.attempt_id)
+                    if attempt:
+                        logger.info(f'Submitting attempt {event.attempt_id} as final solution')
+                        # Check if we need to apply the attempt's patch
+                        if self._pending_patch_application:
+                            # Check if patch application is complete
+                            for obs_event in reversed(state.history[-5:]):
+                                if (
+                                    isinstance(obs_event, CmdOutputObservation)
+                                    and hasattr(self, '_apply_patch_action_id')
+                                    and obs_event.cause == self._apply_patch_action_id
+                                ):
+                                    # Patch application completed
+                                    self._pending_patch_application = False
+                                    return AgentFinishAction(
+                                        final_thought=f'Submitted attempt {event.attempt_id} as final solution. {event.message}. Applied patch successfully.'
+                                    )
+                            # Still waiting for patch application
+                            return self._create_message_action(
+                                content='Applying patch for submitted attempt...',
+                                wait_for_response=False,
+                            )
+
+                        # Apply attempt's patch if command is configured
+                        apply_cmd = None
+                        if hasattr(self.config, 'extended') and self.config.extended:
+                            extended_dict = self.config.extended.model_dump()
+                            apply_cmd = extended_dict.get('rlm_apply_patch_cmd')
+                        if attempt.patch and apply_cmd:
+                            # Apply the patch - use base64 encoding to avoid shell escaping issues
+                            import base64
+                            patch_b64 = base64.b64encode(attempt.patch.encode()).decode()
+                            apply_cmd_final = apply_cmd.replace('{patch}', patch_b64)
+                            apply_action = CmdRunAction(command=apply_cmd_final)
+                            apply_action.set_hard_timeout(600)
+                            self.pending_actions.append(apply_action)
+                            self._pending_patch_application = True
+                            self._apply_patch_action_id = apply_action.id
+                            logger.info(f'Applying patch from submitted attempt {event.attempt_id}')
+                            return apply_action
+                        else:
+                            # No patch to apply, finish immediately
+                            return AgentFinishAction(
+                                final_thought=f'Submitted attempt {event.attempt_id} as final solution. {event.message}'
+                            )
+                    else:
+                        logger.warning(f'Attempt {event.attempt_id} not found, cannot submit as final')
+                        return self._create_message_action(
+                            content=f'Attempt {event.attempt_id} not found. Cannot submit as final.',
+                            wait_for_response=False,
+                        )
+
             # RLM phase - check if we finished browsing/reflection
             for event in reversed(state.history[-10:]):  # Check last 10 events
                 if isinstance(event, FinishBrowsingAttemptAction):
@@ -410,7 +691,7 @@ class RLMAgent(Agent):
                         phase=Phase.ATTEMPT, start_event_id=start_event_id
                     )
                     # Add a message about transitioning
-                    return MessageAction(
+                    return self._create_message_action(
                         content=f'RLM reflection phase completed. Starting new attempt phase (iteration {self.current_iteration}).',
                         wait_for_response=False,
                     )
@@ -424,6 +705,12 @@ class RLMAgent(Agent):
             self.attempt_storage.start_attempt(
                 phase=Phase.ATTEMPT, start_event_id=start_event_id
             )
+
+        # Validate all MessageAction objects in state history to prevent serialization errors
+        # This ensures that when the controller processes these events, they have valid content
+        for event in state.history:
+            if isinstance(event, MessageAction):
+                self._validate_action(event)
 
         # Track events in current attempt
         if self.attempt_storage.current_attempt:
@@ -444,6 +731,12 @@ class RLMAgent(Agent):
 
             case Condensation(action=condensation_action):
                 return condensation_action
+
+        # Validate all MessageAction objects in condensed_history to prevent serialization errors
+        # This ensures that when the controller processes these events, they have valid content
+        for event in condensed_history:
+            if isinstance(event, MessageAction):
+                self._validate_action(event)
 
         # Populate RLM observations with attempt data
         for event in condensed_history:
@@ -515,6 +808,12 @@ class RLMAgent(Agent):
         actions = self.response_to_actions(response)
         logger.debug(f'Actions after response_to_actions: {actions}')
 
+        # Validate all actions to prevent serialization errors
+        # This ensures MessageAction has valid content (prevents RecallAction creation errors in controller)
+        # and RecallAction has valid query
+        for action in actions:
+            self._validate_action(action)
+
         # Handle RLM-specific actions
         for action in actions:
             if isinstance(action, BrowsePreviousAttemptsAction):
@@ -539,8 +838,11 @@ class RLMAgent(Agent):
                     action.thought = f'Attempt {action.attempt_id} not found.'
 
         for action in actions:
+            self._validate_action(action)
             self.pending_actions.append(action)
-        return self.pending_actions.popleft()
+
+        action = self.pending_actions.popleft()
+        return self._validate_action(action)
 
     def _get_initial_user_message(self, history: list[Event]) -> MessageAction:
         """Finds the initial user message action from the full history."""
@@ -560,6 +862,9 @@ class RLMAgent(Agent):
             raise ValueError(
                 'Initial user message not found in history. Please report this issue.'
             )
+        # Validate the message action to ensure content is never None
+        # This prevents errors when the controller creates RecallAction from MessageAction
+        self._validate_action(initial_user_message)
         return initial_user_message
 
     def _get_messages(

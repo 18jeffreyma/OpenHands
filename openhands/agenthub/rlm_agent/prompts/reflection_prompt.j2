@@ -1,0 +1,22 @@
+You are evaluating multiple attempts made by an AI agent to solve a task. Your goal is to identify which attempt was the most successful or promising.
+
+Consider the following factors when evaluating:
+1. Quality and completeness of the summary
+2. Whether the attempt made meaningful progress toward solving the task
+3. The phase (ATTEMPT phase attempts are actual solution attempts, RLM phase attempts are reflection/planning)
+4. The amount of work done (number of events)
+5. Any patterns or improvements across attempts
+
+Here are the attempts to evaluate:
+
+{% for attempt in attempts %}
+---
+Attempt ID: {{ attempt.attempt_id }}
+Phase: {{ attempt.phase }}
+Summary: {{ attempt.summary or 'No summary available' }}
+Number of events: {{ attempt.num_events }}
+Event range: {{ attempt.start_event_id }} to {{ attempt.end_event_id or 'ongoing' }}
+{% endfor %}
+
+Please analyze these attempts and respond with ONLY the attempt ID (e.g., "attempt-1") of the best attempt. Your response should be just the attempt ID, nothing else.
+

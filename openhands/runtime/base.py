@@ -38,6 +38,7 @@ from openhands.events.action import (
     FileReadAction,
     FileWriteAction,
     IPythonRunCellAction,
+    SubmitAttemptAsFinalAction,
     TaskTrackingAction,
 )
 from openhands.events.action.mcp import MCPAction
@@ -53,6 +54,7 @@ from openhands.events.observation import (
     FinishBrowsingAttemptObservation,
     NullObservation,
     Observation,
+    SubmitAttemptAsFinalObservation,
     TaskTrackingObservation,
     UserRejectObservation,
 )
@@ -1012,6 +1014,8 @@ fi
                 )
             elif isinstance(action, FinishBrowsingAttemptAction):
                 return FinishBrowsingAttemptObservation(content=action.message)
+            elif isinstance(action, SubmitAttemptAsFinalAction):
+                return SubmitAttemptAsFinalObservation(content=action.message)
             return NullObservation('')
         if (
             hasattr(action, 'confirmation_state')

@@ -28,6 +28,9 @@ from openhands.agenthub.rlm_agent.tools.expand_previous_attempt import (
 from openhands.agenthub.rlm_agent.tools.finish_browsing_attempts import (
     FinishBrowsingAttemptTool,
 )
+from openhands.agenthub.rlm_agent.tools.submit_attempt_as_final import (
+    SubmitAttemptAsFinalTool,
+)
 from openhands.core.exceptions import (
     FunctionCallNotExistsError,
     FunctionCallValidationError,
@@ -48,6 +51,7 @@ from openhands.events.action import (
     FinishBrowsingAttemptAction,
     IPythonRunCellAction,
     MessageAction,
+    SubmitAttemptAsFinalAction,
     TaskTrackingAction,
 )
 from openhands.events.action.agent import CondensationRequestAction
@@ -333,6 +337,20 @@ def response_to_actions(
                         f'Missing required argument "message" in tool call {tool_call.function.name}'
                     )
                 action = FinishBrowsingAttemptAction(message=arguments['message'])
+
+            elif tool_call.function.name == SubmitAttemptAsFinalTool['function']['name']:
+                if 'attempt_id' not in arguments:
+                    raise FunctionCallValidationError(
+                        f'Missing required argument "attempt_id" in tool call {tool_call.function.name}'
+                    )
+                if 'message' not in arguments:
+                    raise FunctionCallValidationError(
+                        f'Missing required argument "message" in tool call {tool_call.function.name}'
+                    )
+                action = SubmitAttemptAsFinalAction(
+                    attempt_id=arguments['attempt_id'],
+                    message=arguments['message']
+                )
 
             # ================================================
             # MCPAction (MCP)

@@ -180,3 +180,14 @@ class FinishBrowsingAttemptObservation(Observation):
     @property
     def message(self) -> str:
         return self.content
+
+
+@dataclass
+class SubmitAttemptAsFinalObservation(Observation):
+    """The output of submitting an attempt as final."""
+
+    observation: str = ObservationType.SUBMIT_ATTEMPT_AS_FINAL
+
+    @property
+    def message(self) -> str:
+        return self.content

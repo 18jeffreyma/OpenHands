@@ -82,7 +82,9 @@ def _get_swebench_workspace_dir_name(instance: pd.Series) -> str:
     return f'{instance.repo}__{instance.version}'.replace('/', '__')
 
 
-def get_instruction(instance: pd.Series, metadata: EvalMetadata) -> MessageAction:
+def get_instruction(
+    instance: pd.Series, metadata: EvalMetadata, initial_commit_hash: str | None = None
+) -> MessageAction:
     workspace_dir_name = _get_swebench_workspace_dir_name(instance)
 
     # TODO: Change to testbed?
@@ -91,7 +93,7 @@ def get_instruction(instance: pd.Series, metadata: EvalMetadata) -> MessageActio
 /workspace/{workspace_dir_name}
 </uploaded_files>
 
-I’ve uploaded a python code repository in the directory workspace_dir_name. Consider the following performance workload and `workload()` function showing an specific usage of the repository:
+I've uploaded a python code repository in the directory workspace_dir_name. Consider the following performance workload and `workload()` function showing an specific usage of the repository:
 <performance_workload>
 {instance.workload}
 </performance_workload>
@@ -114,6 +116,13 @@ Follow these steps to improve performance:
 8. Once you are satisfied, please use the finish command to complete your task.
 
 Please remember that you should not change the implementation of the `workload()` function. The performance improvement should solely come from editing the source files in the code repository.
+"""
+
+    if initial_commit_hash:
+        instruction += f"""
+<initial_state>
+The repository has been initialized at git commit {initial_commit_hash}. If you need to reset the repository to this initial state at any point, you can run: `git reset --hard {initial_commit_hash}`
+</initial_state>
 """
 
     if RUN_WITH_BROWSING:
@@ -198,6 +207,10 @@ def get_config(
         condenser=metadata.condenser_config,
         enable_prompt_extensions=False,
     )
+
+    # Note: RLM-specific patch extraction and application commands will be set
+    # in process_instance after we have the initial commit hash from initialize_runtime
+
     config.set_agent_config(agent_config)
     return config
 
@@ -206,10 +219,13 @@ def initialize_runtime(
     runtime: Runtime,
     instance: pd.Series,  # this argument is not required
     metadata: EvalMetadata,
-):
+) -> str:
     """Initialize the runtime for the agent.
 
     This function is called before the runtime is used to run the agent.
+
+    Returns:
+        The commit hash of the initial state commit.
     """
     logger.info('-' * 30)
     logger.info('BEGIN Runtime Initialization Fn')
@@ -334,9 +350,75 @@ def initialize_runtime(
         f'Expected to find python interpreter from testbed, but got: {str(obs)}',
     )
 
+    # Create a git commit to mark the initial state before the agent starts
+    # This allows the agent to reset to this state if needed
+    action = CmdRunAction(command='git add -A')
+    action.set_hard_timeout(600)
+    logger.info(action, extra={'msg_type': 'ACTION'})
+    obs = runtime.run_action(action)
+    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    assert_and_raise(
+        obs.exit_code == 0,
+        f'Failed to git add -A before creating initial commit: {str(obs)}',
+    )
+
+    # Check if there are any changes to commit
+    action = CmdRunAction(command='git status --porcelain')
+    action.set_hard_timeout(600)
+    logger.info(action, extra={'msg_type': 'ACTION'})
+    obs = runtime.run_action(action)
+    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    assert_and_raise(
+        obs.exit_code == 0,
+        f'Failed to check git status: {str(obs)}',
+    )
+
+    initial_commit_hash = None
+    if obs.content.strip():
+        # There are changes, create a commit
+        action = CmdRunAction(
+            command='git commit -m "Initial state before agent execution"'
+        )
+        action.set_hard_timeout(600)
+        logger.info(action, extra={'msg_type': 'ACTION'})
+        obs = runtime.run_action(action)
+        logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+        assert_and_raise(
+            obs.exit_code == 0,
+            f'Failed to create initial git commit: {str(obs)}',
+        )
+
+        # Get the commit hash
+        action = CmdRunAction(command='git rev-parse HEAD')
+        action.set_hard_timeout(600)
+        logger.info(action, extra={'msg_type': 'ACTION'})
+        obs = runtime.run_action(action)
+        logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+        assert_and_raise(
+            obs.exit_code == 0,
+            f'Failed to get commit hash: {str(obs)}',
+        )
+        initial_commit_hash = obs.content.strip()
+        logger.info(f'Created initial state commit: {initial_commit_hash}')
+    else:
+        # No changes, get the current HEAD commit hash
+        action = CmdRunAction(command='git rev-parse HEAD')
+        action.set_hard_timeout(600)
+        logger.info(action, extra={'msg_type': 'ACTION'})
+        obs = runtime.run_action(action)
+        logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+        assert_and_raise(
+            obs.exit_code == 0,
+            f'Failed to get current commit hash: {str(obs)}',
+        )
+        initial_commit_hash = obs.content.strip()
+        logger.info(f'Using current HEAD as initial state: {initial_commit_hash}')
+
     logger.info('-' * 30)
     logger.info('END Runtime Initialization Fn')
     logger.info('-' * 30)
+
+    return initial_commit_hash
 
 
 def complete_runtime(
@@ -577,9 +659,28 @@ def process_instance(
         call_async_from_sync(runtime.connect)
 
         try:
-            initialize_runtime(runtime, instance, metadata)
+            initial_commit_hash = initialize_runtime(runtime, instance, metadata)
 
-            message_action = get_instruction(instance, metadata)
+            # Store initial commit hash in metadata for RLM agent patch extraction
+            metadata.details['initial_commit_hash'] = initial_commit_hash
+
+            # TODO(jjma): Make this more robust. Set RLM-specific patch extraction and
+            # application commands if using RLM agent
+            if metadata.agent_class == 'RLMAgent' and initial_commit_hash:
+                # Command to extract patch: git diff from initial commit
+                extract_cmd = f'git diff {initial_commit_hash}'
+                # Command to apply patch: will use base64 encoding in agent
+                # The agent will handle the actual application
+                apply_cmd = 'echo "{patch}" | base64 -d | git apply'
+                config.agent_config.extended['rlm_extract_patch_cmd'] = extract_cmd
+                config.agent_config.extended['rlm_apply_patch_cmd'] = apply_cmd
+                # Update agent's config
+                agent = config.get_agent()
+                if hasattr(agent, 'extract_patch_cmd'):
+                    agent.extract_patch_cmd = extract_cmd
+                    agent.apply_patch_cmd = apply_cmd
+
+            message_action = get_instruction(instance, metadata, initial_commit_hash)
 
             # Here's how you can run the agent (similar to the `main` function) and get the final task state
             state: State | None = asyncio.run(

@@ -8,6 +8,7 @@ from openhands.events.observation.agent import (
     FinishAttemptObservation,
     FinishBrowsingAttemptObservation,
     RecallObservation,
+    SubmitAttemptAsFinalObservation,
 )
 from openhands.events.observation.browse import BrowserOutputObservation
 from openhands.events.observation.commands import (
@@ -60,4 +61,5 @@ __all__ = [
     'BrowsePreviousAttemptsObservation',
     'ExpandPreviousAttemptObservation',
     'FinishBrowsingAttemptObservation',
+    'SubmitAttemptAsFinalObservation',
 ]

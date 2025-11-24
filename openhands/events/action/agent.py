@@ -318,3 +318,25 @@ class FinishBrowsingAttemptAction(Action):
     @property
     def final_message(self) -> str:
         return self.message
+
+
+@dataclass
+class SubmitAttemptAsFinalAction(Action):
+    """An action where the agent submits a specific attempt as the final solution.
+
+    Attributes:
+        attempt_id (str): The unique identifier of the attempt to submit as final.
+        message (str): Explanation of why this attempt is being submitted as final.
+        thought (str): The agent's explanation of its actions.
+        action (str): The action type, namely ActionType.SUBMIT_ATTEMPT_AS_FINAL.
+    """
+
+    attempt_id: str = ''
+    message: str = ''
+    thought: str = ''
+    action: str = ActionType.SUBMIT_ATTEMPT_AS_FINAL
+    runnable: ClassVar[bool] = False
+
+    @property
+    def final_message(self) -> str:
+        return self.message

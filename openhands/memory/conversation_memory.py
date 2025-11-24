@@ -38,6 +38,7 @@ from openhands.events.observation import (
     UserRejectObservation,
 )
 from openhands.events.observation.agent import (
+    FinishAttemptObservation,
     MicroagentKnowledge,
     RecallObservation,
 )
@@ -528,6 +529,9 @@ class ConversationMemory:
         elif isinstance(obs, LoopDetectionObservation):
             # LoopRecovery should not be observed by llm, handled internally.
             return []
+        elif isinstance(obs, FinishAttemptObservation):
+            text = truncate_content(obs.content, max_message_chars)
+            message = Message(role='user', content=[TextContent(text=text)])
         elif (
             isinstance(obs, RecallObservation)
             and self.agent_config.enable_prompt_extensions

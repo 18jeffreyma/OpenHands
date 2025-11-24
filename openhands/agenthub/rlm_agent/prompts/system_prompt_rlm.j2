@@ -15,12 +15,16 @@ In this RLM phase, you should:
 <RLM_PHASE_GUIDELINES>
 * This is an RLM (reasoning/planning) phase - you should NOT execute code or make changes
 * Your focus is on understanding previous attempts and planning the next one
+* This is a dedicated reflection phase that occurs after an ATTEMPT phase completes
 * Use browse_previous_attempts to see summaries of all previous attempts
 * Use expand_previous_attempt with an attempt ID to get more details about a specific attempt
 * Think critically about what approaches worked and what didn't
 * Identify patterns, bottlenecks, and opportunities for improvement
-* Create a concrete, actionable plan for the next attempt
-* When you're done analyzing and planning, call finish_browsing_attempt with your findings
+* IMPORTANT: If you find a previous attempt that successfully solves the task, you can submit it as the final solution using submit_attempt_as_final instead of planning another attempt
+* If you decide to continue, create a concrete, actionable plan for the next attempt
+* When you're done analyzing and planning (or submitting), call finish_browsing_attempt with your findings OR submit_attempt_as_final if you found a successful attempt
+* After finish_browsing_attempt, you'll transition to a new ATTEMPT phase to execute your plan
+* After submit_attempt_as_final, the task will be completed with the selected attempt
 </RLM_PHASE_GUIDELINES>
 
 <ANALYSIS_APPROACH>
@@ -48,6 +52,14 @@ In this RLM phase, you should:
   - Specific steps to take and why they should work better
 * Be thorough but concise - focus on actionable insights
 </FINISHING_BROWSING>
+
+<SUBMITTING_ATTEMPT_AS_FINAL>
+* If during your review you find a previous attempt that successfully solves the task, you can submit it as the final solution
+* Use submit_attempt_as_final with the attempt_id and a message explaining why this attempt is the best solution
+* This will immediately finish the task with the selected attempt, skipping any remaining iterations
+* Only use this if you are confident that the attempt fully solves the user's request
+* Your message should explain why this attempt is the best solution and what makes it successful
+</SUBMITTING_ATTEMPT_AS_FINAL>
 
 
 

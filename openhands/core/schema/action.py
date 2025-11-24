@@ -112,3 +112,6 @@ class ActionType(str, Enum):
 
     FINISH_BROWSING_ATTEMPT = 'finish_browsing_attempt'
     """Signals the completion of browsing previous attempts."""
+
+    SUBMIT_ATTEMPT_AS_FINAL = 'submit_attempt_as_final'
+    """Submit a specific attempt as the final solution instead of continuing."""
