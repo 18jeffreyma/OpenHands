@@ -27,7 +27,7 @@ class Attempt:
     """Unique identifier for this attempt."""
 
     phase: str
-    """Phase during which this attempt was made (ATTEMPT or RLM)."""
+    """Phase during which this attempt was made (ATTEMPT, CHARACTERIZE, or REFLECT)."""
 
     start_event_id: int
     """Event ID where this attempt started."""
@@ -37,6 +37,13 @@ class Attempt:
 
     summary: str = ''
     """Summary of what was done in this attempt."""
+
+    characterization_summary: str = ''
+    """A comprehensive semantic summary characterizing this attempt.
+
+    This includes key modifications, performance details, confidence assessment,
+    and other information useful for comparing and identifying attempts during reflection.
+    """
 
     patch: str = ''
     """Git patch/diff representing the changes made in this attempt."""
@@ -60,7 +67,7 @@ class AttemptStorage:
         """Start a new attempt.
 
         Args:
-            phase: The phase during which this attempt is made (ATTEMPT or RLM).
+            phase: The phase during which this attempt is made (ATTEMPT, CHARACTERIZE, or REFLECT).
             start_event_id: The event ID where this attempt starts.
 
         Returns:
@@ -79,7 +86,11 @@ class AttemptStorage:
         return attempt
 
     def finish_attempt(
-        self, end_event_id: int, summary: str = '', patch: str = ''
+        self,
+        end_event_id: int,
+        summary: str = '',
+        patch: str = '',
+        characterization_summary: str = '',
     ) -> None:
         """Finish the current attempt.
 
@@ -87,6 +98,7 @@ class AttemptStorage:
             end_event_id: The event ID where this attempt ends.
             summary: Optional summary of what was done in this attempt.
             patch: Optional git patch/diff representing the changes made in this attempt.
+            characterization_summary: Optional semantic summary for this attempt.
         """
         if self.current_attempt is None:
             return
@@ -96,6 +108,8 @@ class AttemptStorage:
             self.current_attempt.summary = summary
         if patch:
             self.current_attempt.patch = patch
+        if characterization_summary:
+            self.current_attempt.characterization_summary = characterization_summary
         self.current_attempt = None
 
     def add_event_to_current_attempt(self, event: Event) -> None:
@@ -125,7 +139,7 @@ class AttemptStorage:
         """Get all attempts made during a specific phase.
 
         Args:
-            phase: The phase to filter by (ATTEMPT or RLM).
+            phase: The phase to filter by (ATTEMPT, CHARACTERIZE, or REFLECT).
 
         Returns:
             List of Attempt objects from the specified phase.
@@ -153,6 +167,8 @@ class AttemptStorage:
                     'id': attempt.attempt_id,
                     'phase': attempt.phase,
                     'summary': attempt.summary or 'No summary available',
+                    'characterization': attempt.characterization_summary
+                    or 'Not characterized',
                     'start_event_id': attempt.start_event_id,
                     'end_event_id': attempt.end_event_id,
                     'num_events': len(attempt.events),

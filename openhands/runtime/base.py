@@ -34,7 +34,8 @@ from openhands.events.action import (
     ExpandPreviousAttemptAction,
     FileEditAction,
     FinishAttemptAction,
-    FinishBrowsingAttemptAction,
+    FinishCharacterizationAction,
+    FinishReflectionAction,
     FileReadAction,
     FileWriteAction,
     IPythonRunCellAction,
@@ -51,7 +52,8 @@ from openhands.events.observation import (
     ExpandPreviousAttemptObservation,
     FileReadObservation,
     FinishAttemptObservation,
-    FinishBrowsingAttemptObservation,
+    FinishCharacterizationObservation,
+    FinishReflectionObservation,
     NullObservation,
     Observation,
     SubmitAttemptAsFinalObservation,
@@ -1012,8 +1014,12 @@ fi
                 return ExpandPreviousAttemptObservation(
                     content=f'Expanding attempt {action.attempt_id}...'
                 )
-            elif isinstance(action, FinishBrowsingAttemptAction):
-                return FinishBrowsingAttemptObservation(content=action.message)
+            elif isinstance(action, FinishReflectionAction):
+                return FinishReflectionObservation(content=action.message)
+            elif isinstance(action, FinishCharacterizationAction):
+                return FinishCharacterizationObservation(
+                    content=action.characterization_summary
+                )
             elif isinstance(action, SubmitAttemptAsFinalAction):
                 return SubmitAttemptAsFinalObservation(content=action.message)
             return NullObservation('')

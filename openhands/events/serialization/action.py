@@ -13,7 +13,8 @@ from openhands.events.action.agent import (
     CondensationRequestAction,
     ExpandPreviousAttemptAction,
     FinishAttemptAction,
-    FinishBrowsingAttemptAction,
+    FinishCharacterizationAction,
+    FinishReflectionAction,
     LoopRecoveryAction,
     RecallAction,
     SubmitAttemptAsFinalAction,
@@ -58,7 +59,8 @@ actions = (
     FinishAttemptAction,
     BrowsePreviousAttemptsAction,
     ExpandPreviousAttemptAction,
-    FinishBrowsingAttemptAction,
+    FinishReflectionAction,
+    FinishCharacterizationAction,
     SubmitAttemptAsFinalAction,
 )
 

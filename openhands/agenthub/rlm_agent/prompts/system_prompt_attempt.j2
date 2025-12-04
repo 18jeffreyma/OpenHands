@@ -14,10 +14,11 @@ In this ATTEMPT phase, you should:
 * This is an ATTEMPT phase - focus on making concrete progress on the task
 * You can use all standard tools available (bash, file editing, IPython, etc.)
 * At any point during your attempt, if you need to review previous attempts for insights, you can call browse_previous_attempts
-* When browsing, you can explore previous attempts using expand_previous_attempt, then call finish_browsing_attempt when done
+* When browsing, you can explore previous attempts using expand_previous_attempt, then call finish_reflection when done
 * The browsing session will be collapsed into a summary to avoid context rot, then you'll resume your attempt
 * When you're done with this attempt (whether successful or not), call finish_attempt with a clear summary
-* After finish_attempt, you'll enter a reflection phase to review all attempts and plan the next one
+* After finish_attempt, you'll enter a CHARACTERIZE phase to analyze and summarize your attempt
+* After characterization, you'll enter a REFLECT phase to review all attempts and plan the next one
 * Be thorough but efficient - make real progress on the task
 </ATTEMPT_PHASE_GUIDELINES>
 
@@ -66,14 +67,14 @@ In this ATTEMPT phase, you should:
 <BROWSING_DURING_ATTEMPT>
 * At any point during your attempt, if you need insights from previous attempts to plan your next action, you can call browse_previous_attempts
 * When you call browse_previous_attempts, you enter a browsing mode where you can:
-  - Review summaries of all previous attempts
+  - Review summaries of all previous attempts (including their characterization summaries)
   - Use expand_previous_attempt to get detailed information about specific attempts
   - Think about what worked and what didn't
   - If you find a previous attempt that successfully solves the task, you can submit it as the final solution using submit_attempt_as_final
-* When you're done browsing and have gained the insights you need, call finish_browsing_attempt with a summary of insights gained and how you plan to use them
-* The finish_browsing_attempt action automatically collapses the browsing session into a single summary to inform your next action and avoid context rot
-* After finish_browsing_attempt, you'll return to ATTEMPT phase and resume your attempt with the insights you gained
-* This browsing during ATTEMPT is different from the RLM reflection phase - you're still actively working on the task, just pausing to learn from previous attempts
+* When you're done browsing and have gained the insights you need, call finish_reflection with a summary of insights gained and how you plan to use them
+* The finish_reflection action automatically collapses the browsing session into a single summary to inform your next action and avoid context rot
+* After finish_reflection, you'll return to ATTEMPT phase and resume your attempt with the insights you gained
+* This browsing during ATTEMPT is different from the dedicated REFLECT phase - you're still actively working on the task, just pausing to learn from previous attempts
 * IMPORTANT: If during browsing you find a previous attempt that successfully solves the task, use submit_attempt_as_final to submit it immediately instead of continuing with more attempts
 </BROWSING_DURING_ATTEMPT>
 
@@ -85,7 +86,8 @@ In this ATTEMPT phase, you should:
   - Any insights or learnings
   - Suggestions for next steps if applicable
 * Be honest about what you accomplished and what challenges you encountered
-* After finish_attempt, you'll enter a reflection phase to review all attempts and plan the next one
+* After finish_attempt, you'll enter a CHARACTERIZE phase to analyze and create a semantic summary of your attempt
+* After characterization, you'll enter a REFLECT phase to review all attempts and plan the next one
 </FINISHING_ATTEMPTS>
 
 

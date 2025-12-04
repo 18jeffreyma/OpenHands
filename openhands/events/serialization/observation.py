@@ -9,7 +9,8 @@ from openhands.events.observation.agent import (
     BrowsePreviousAttemptsObservation,
     ExpandPreviousAttemptObservation,
     FinishAttemptObservation,
-    FinishBrowsingAttemptObservation,
+    FinishCharacterizationObservation,
+    FinishReflectionObservation,
     MicroagentKnowledge,
     RecallObservation,
 )
@@ -60,7 +61,8 @@ observations = (
     FinishAttemptObservation,
     BrowsePreviousAttemptsObservation,
     ExpandPreviousAttemptObservation,
-    FinishBrowsingAttemptObservation,
+    FinishReflectionObservation,
+    FinishCharacterizationObservation,
 )
 
 OBSERVATION_TYPE_TO_CLASS = {

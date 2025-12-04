@@ -71,8 +71,11 @@ class ObservationType(str, Enum):
     EXPAND_PREVIOUS_ATTEMPT = 'expand_previous_attempt'
     """Result of expanding a previous attempt"""
 
-    FINISH_BROWSING_ATTEMPT = 'finish_browsing_attempt'
-    """Result of finishing browsing attempts"""
+    FINISH_REFLECTION = 'finish_reflection'
+    """Result of finishing the reflection phase"""
+
+    FINISH_CHARACTERIZATION = 'finish_characterization'
+    """Result of finishing the characterization phase"""
 
     SUBMIT_ATTEMPT_AS_FINAL = 'submit_attempt_as_final'
     """Result of submitting an attempt as the final solution"""

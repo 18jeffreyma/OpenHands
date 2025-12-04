@@ -172,10 +172,21 @@ class ExpandPreviousAttemptObservation(Observation):
 
 
 @dataclass
-class FinishBrowsingAttemptObservation(Observation):
-    """The output of finishing browsing attempts."""
+class FinishReflectionObservation(Observation):
+    """The output of finishing the reflection phase."""
 
-    observation: str = ObservationType.FINISH_BROWSING_ATTEMPT
+    observation: str = ObservationType.FINISH_REFLECTION
+
+    @property
+    def message(self) -> str:
+        return self.content
+
+
+@dataclass
+class FinishCharacterizationObservation(Observation):
+    """The output of finishing the characterization phase."""
+
+    observation: str = ObservationType.FINISH_CHARACTERIZATION
 
     @property
     def message(self) -> str:

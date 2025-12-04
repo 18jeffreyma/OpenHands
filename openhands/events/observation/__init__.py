@@ -6,7 +6,8 @@ from openhands.events.observation.agent import (
     BrowsePreviousAttemptsObservation,
     ExpandPreviousAttemptObservation,
     FinishAttemptObservation,
-    FinishBrowsingAttemptObservation,
+    FinishCharacterizationObservation,
+    FinishReflectionObservation,
     RecallObservation,
     SubmitAttemptAsFinalObservation,
 )
@@ -60,6 +61,7 @@ __all__ = [
     'FinishAttemptObservation',
     'BrowsePreviousAttemptsObservation',
     'ExpandPreviousAttemptObservation',
-    'FinishBrowsingAttemptObservation',
+    'FinishReflectionObservation',
+    'FinishCharacterizationObservation',
     'SubmitAttemptAsFinalObservation',
 ]

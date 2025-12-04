@@ -12,7 +12,8 @@ from openhands.events.action.agent import (
     ChangeAgentStateAction,
     ExpandPreviousAttemptAction,
     FinishAttemptAction,
-    FinishBrowsingAttemptAction,
+    FinishCharacterizationAction,
+    FinishReflectionAction,
     LoopRecoveryAction,
     RecallAction,
     SubmitAttemptAsFinalAction,
@@ -55,6 +56,7 @@ __all__ = [
     'FinishAttemptAction',
     'BrowsePreviousAttemptsAction',
     'ExpandPreviousAttemptAction',
-    'FinishBrowsingAttemptAction',
+    'FinishReflectionAction',
+    'FinishCharacterizationAction',
     'SubmitAttemptAsFinalAction',
 ]

@@ -301,23 +301,43 @@ class ExpandPreviousAttemptAction(Action):
 
 
 @dataclass
-class FinishBrowsingAttemptAction(Action):
-    """An action where the agent finishes browsing previous attempts.
+class FinishReflectionAction(Action):
+    """An action where the agent finishes the reflection phase.
 
     Attributes:
-        message (str): Summary of takeaways from browsing previous attempts and next steps.
+        message (str): Summary of insights from reflection and plan for next attempt.
         thought (str): The agent's explanation of its actions.
-        action (str): The action type, namely ActionType.FINISH_BROWSING_ATTEMPT.
+        action (str): The action type, namely ActionType.FINISH_REFLECTION.
     """
 
     message: str = ''
     thought: str = ''
-    action: str = ActionType.FINISH_BROWSING_ATTEMPT
+    action: str = ActionType.FINISH_REFLECTION
     runnable: ClassVar[bool] = False
 
     @property
     def final_message(self) -> str:
         return self.message
+
+
+@dataclass
+class FinishCharacterizationAction(Action):
+    """An action where the agent finishes the characterization phase for an attempt.
+
+    Attributes:
+        characterization_summary (str): A comprehensive semantic summary characterizing this attempt.
+        thought (str): The agent's explanation of its actions.
+        action (str): The action type, namely ActionType.FINISH_CHARACTERIZATION.
+    """
+
+    characterization_summary: str = ''
+    thought: str = ''
+    action: str = ActionType.FINISH_CHARACTERIZATION
+    runnable: ClassVar[bool] = False
+
+    @property
+    def message(self) -> str:
+        return f'Characterization complete: {self.characterization_summary[:100]}...'
 
 
 @dataclass

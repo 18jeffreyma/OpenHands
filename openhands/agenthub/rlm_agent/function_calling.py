@@ -25,8 +25,11 @@ from openhands.agenthub.rlm_agent.tools.browse_previous_attempts import (
 from openhands.agenthub.rlm_agent.tools.expand_previous_attempt import (
     ExpandPreviousAttemptTool,
 )
-from openhands.agenthub.rlm_agent.tools.finish_browsing_attempts import (
-    FinishBrowsingAttemptTool,
+from openhands.agenthub.rlm_agent.tools.finish_characterization import (
+    FinishCharacterizationTool,
+)
+from openhands.agenthub.rlm_agent.tools.finish_reflection import (
+    FinishReflectionTool,
 )
 from openhands.agenthub.rlm_agent.tools.submit_attempt_as_final import (
     SubmitAttemptAsFinalTool,
@@ -48,7 +51,8 @@ from openhands.events.action import (
     FileEditAction,
     FileReadAction,
     FinishAttemptAction,
-    FinishBrowsingAttemptAction,
+    FinishCharacterizationAction,
+    FinishReflectionAction,
     IPythonRunCellAction,
     MessageAction,
     SubmitAttemptAsFinalAction,
@@ -331,12 +335,24 @@ def response_to_actions(
                     )
                 action = ExpandPreviousAttemptAction(attempt_id=arguments['id'])
 
-            elif tool_call.function.name == FinishBrowsingAttemptTool['function']['name']:
+            elif tool_call.function.name == FinishReflectionTool['function']['name']:
                 if 'message' not in arguments:
                     raise FunctionCallValidationError(
                         f'Missing required argument "message" in tool call {tool_call.function.name}'
                     )
-                action = FinishBrowsingAttemptAction(message=arguments['message'])
+                action = FinishReflectionAction(message=arguments['message'])
+
+            elif (
+                tool_call.function.name
+                == FinishCharacterizationTool['function']['name']
+            ):
+                if 'characterization_summary' not in arguments:
+                    raise FunctionCallValidationError(
+                        f'Missing required argument "characterization_summary" in tool call {tool_call.function.name}'
+                    )
+                action = FinishCharacterizationAction(
+                    characterization_summary=arguments['characterization_summary']
+                )
 
             elif tool_call.function.name == SubmitAttemptAsFinalTool['function']['name']:
                 if 'attempt_id' not in arguments:

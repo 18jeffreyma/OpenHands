@@ -110,8 +110,11 @@ class ActionType(str, Enum):
     EXPAND_PREVIOUS_ATTEMPT = 'expand_previous_attempt'
     """Expand on a previous attempt with more details."""
 
-    FINISH_BROWSING_ATTEMPT = 'finish_browsing_attempt'
-    """Signals the completion of browsing previous attempts."""
+    FINISH_REFLECTION = 'finish_reflection'
+    """Signals the completion of the reflection phase."""
+
+    FINISH_CHARACTERIZATION = 'finish_characterization'
+    """Signals the completion of the characterization phase for an attempt."""
 
     SUBMIT_ATTEMPT_AS_FINAL = 'submit_attempt_as_final'
     """Submit a specific attempt as the final solution instead of continuing."""

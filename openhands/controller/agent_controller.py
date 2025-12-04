@@ -586,7 +586,7 @@ class AgentController:
                 else RecallType.KNOWLEDGE
             )
 
-            recall_action = RecallAction(query=action.content, recall_type=recall_type)
+            recall_action = RecallAction(query=action.content or '', recall_type=recall_type)
             self._pending_action = recall_action
             # this is source=USER because the user message is the trigger for the microagent retrieval
             self.event_stream.add_event(recall_action, EventSource.USER)
