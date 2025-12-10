@@ -1,0 +1,15 @@
+## Previous Attempts Summary
+
+{% if attempt_summaries %}
+{% for attempt in attempt_summaries %}
+### {{ attempt.id }} ({{ attempt.phase }})
+**Summary:** {{ attempt.summary }}
+**Characterization:** {{ attempt.characterization }}
+
+{% endfor %}
+{% else %}
+No previous attempts to review.
+{% endif %}
+
+
+

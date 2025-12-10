@@ -189,7 +189,18 @@ def get_config(
     )
 
     # Get RLM-specific configuration
-    rlm_max_iterations = int(os.environ.get('RLM_MAX_ITERATIONS', '3'))
+    # Prefer the CLI-provided max_iterations so swe scripts (run_infer_rlm.sh)
+    # fully control the number of RLM iterations; fall back to env for overrides.
+    rlm_max_iterations = (
+        metadata.max_iterations
+        if metadata.max_iterations is not None
+        else int(os.environ.get('RLM_MAX_ITERATIONS', '3'))
+    )
+
+    # Set up phase logging directory
+    rlm_phase_log_dir = os.path.join(
+        metadata.eval_output_dir, 'phase_logs', instance['instance_id']
+    )
 
     from openhands.core.config.extended_config import ExtendedConfig
 
@@ -200,7 +211,10 @@ def get_config(
         enable_mcp=False,
         condenser=metadata.condenser_config,
         enable_prompt_extensions=False,
-        extended=ExtendedConfig({'rlm_max_iterations': rlm_max_iterations}),
+        extended=ExtendedConfig({
+            'rlm_max_iterations': rlm_max_iterations,
+            'rlm_phase_log_dir': rlm_phase_log_dir,
+        }),
     )
 
     config.set_agent_config(agent_config)

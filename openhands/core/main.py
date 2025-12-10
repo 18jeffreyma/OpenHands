@@ -221,6 +221,10 @@ async def run_controller(
                     message = read_input(config.cli_multiline_input)
                 else:
                     message = fake_user_response_fn(controller.get_state())
+                # Skip creating MessageAction if fake_user_response_fn returned None
+                # (indicating no user response is needed)
+                if message is None:
+                    return
                 action = MessageAction(content=message)
                 event_stream.add_event(action, EventSource.USER)
 

@@ -6,6 +6,7 @@ made by the RLM agent during its execution.
 
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -54,6 +55,9 @@ class Attempt:
     metadata: dict[str, Any] = field(default_factory=dict)
     """Additional metadata about this attempt."""
 
+    start_time: float = field(default_factory=time.monotonic)
+    """Monotonic timestamp when this attempt began (used for guardrails)."""
+
 
 class AttemptStorage:
     """Stores and manages attempts made by the RLM agent."""
@@ -63,12 +67,15 @@ class AttemptStorage:
         self.current_attempt: Attempt | None = None
         self._next_attempt_id = 1
 
-    def start_attempt(self, phase: str, start_event_id: int) -> Attempt:
+    def start_attempt(
+        self, phase: str, start_event_id: int, start_time: float | None = None
+    ) -> Attempt:
         """Start a new attempt.
 
         Args:
             phase: The phase during which this attempt is made (ATTEMPT, CHARACTERIZE, or REFLECT).
             start_event_id: The event ID where this attempt starts.
+            start_time: Optional monotonic timestamp for when the attempt began.
 
         Returns:
             The newly created Attempt object.
@@ -80,6 +87,7 @@ class AttemptStorage:
             attempt_id=attempt_id,
             phase=phase,
             start_event_id=start_event_id,
+            start_time=start_time or time.monotonic(),
         )
         self.attempts.append(attempt)
         self.current_attempt = attempt
@@ -154,14 +162,23 @@ class AttemptStorage:
         """
         return self.attempts.copy()
 
-    def get_summarized_attempts(self) -> list[dict[str, Any]]:
-        """Get a summarized view of all attempts.
+    def get_summarized_attempts(
+        self, completed_only: bool = True
+    ) -> list[dict[str, Any]]:
+        """Get a summarized view of attempts.
+
+        Args:
+            completed_only: If True, only returns completed attempts (with end_event_id set).
+                          If False, returns all attempts including in-progress ones.
 
         Returns:
             List of dictionaries containing summarized attempt information.
         """
         summaries = []
         for attempt in self.attempts:
+            # Skip in-progress attempts if completed_only is True
+            if completed_only and attempt.end_event_id is None:
+                continue
             summaries.append(
                 {
                     'id': attempt.attempt_id,

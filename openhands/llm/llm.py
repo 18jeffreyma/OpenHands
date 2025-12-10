@@ -310,6 +310,8 @@ class LLM(RetryMixin, DebugMixin):
             # log the entire LLM prompt
             self.log_prompt(messages)
 
+            log_metadata = kwargs.pop('log_metadata', None)
+
             # set litellm modify_params to the configured value
             # True by default to allow litellm to do transformations like adding a default message, when a message is empty
             # NOTE: this setting is global; unlike drop_params, it cannot be overridden in the litellm completion partial
@@ -382,9 +384,15 @@ class LLM(RetryMixin, DebugMixin):
             # log for evals or other scripts that need the raw completion
             if self.config.log_completions:
                 assert self.config.log_completions_folder is not None
+
+                # Create phase suffix for filename if metadata includes phase
+                phase_suffix = ""
+                if log_metadata and isinstance(log_metadata, dict) and 'phase' in log_metadata:
+                    phase_suffix = f"-{log_metadata['phase']}"
+
                 log_file = os.path.join(
                     self.config.log_completions_folder,
-                    f'{self.config.model.replace("/", "__")}-{time.time()}.json',
+                    f'{self.config.model.replace("/", "__")}-{time.time()}{phase_suffix}.json',
                 )
 
                 # set up the dict to be logged
@@ -400,6 +408,10 @@ class LLM(RetryMixin, DebugMixin):
                     'timestamp': time.time(),
                     'cost': cost,
                 }
+
+                # Add log_metadata if provided
+                if log_metadata:
+                    _d['log_metadata'] = log_metadata
 
                 # if non-native function calling, save messages/response separately
                 if mock_function_calling:

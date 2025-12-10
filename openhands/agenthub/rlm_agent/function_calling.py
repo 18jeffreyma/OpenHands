@@ -19,11 +19,8 @@ from openhands.agenthub.codeact_agent.tools import (
 )
 from openhands.agenthub.codeact_agent.tools.security_utils import RISK_LEVELS
 from openhands.agenthub.rlm_agent.tools.attempt import FinishAttemptTool
-from openhands.agenthub.rlm_agent.tools.browse_previous_attempts import (
-    BrowsePreviousAttemptsTool,
-)
-from openhands.agenthub.rlm_agent.tools.expand_previous_attempt import (
-    ExpandPreviousAttemptTool,
+from openhands.agenthub.rlm_agent.tools.browse_attempt import (
+    BrowseAttemptTool,
 )
 from openhands.agenthub.rlm_agent.tools.finish_characterization import (
     FinishCharacterizationTool,
@@ -45,9 +42,8 @@ from openhands.events.action import (
     AgentDelegateAction,
     AgentFinishAction,
     AgentThinkAction,
-    BrowsePreviousAttemptsAction,
     CmdRunAction,
-    ExpandPreviousAttemptAction,
+    ExpandPreviousAttemptAction,  # Keep class name for compatibility, but tool is now browse_attempt
     FileEditAction,
     FileReadAction,
     FinishAttemptAction,
@@ -91,7 +87,9 @@ def set_security_risk(action: Action, arguments: dict) -> None:
 
 
 def response_to_actions(
-    response: ModelResponse, mcp_tool_names: list[str] | None = None
+    response: ModelResponse,
+    mcp_tool_names: list[str] | None = None,
+    allowed_tools: set[str] | None = None,
 ) -> list[Action]:
     actions: list[Action] = []
     assert len(response.choices) == 1, 'Only one choice is supported for now'
@@ -117,6 +115,18 @@ def response_to_actions(
                 raise FunctionCallValidationError(
                     f'Failed to parse tool call arguments: {tool_call.function.arguments}'
                 ) from e
+
+            # Guardrail: reject any tool call that was not offered in the current phase.
+            if (
+                allowed_tools is not None
+                and tool_call.function.name not in allowed_tools
+                and not (mcp_tool_names and tool_call.function.name in mcp_tool_names)
+            ):
+                allowed_list = ', '.join(sorted(allowed_tools))
+                raise FunctionCallNotExistsError(
+                    f'Tool {tool_call.function.name} is not allowed in the current phase. '
+                    f'Allowed tools: {allowed_list or "none"}.'
+                )
 
             # ================================================
             # CmdRunTool (Bash)
@@ -325,10 +335,7 @@ def response_to_actions(
                     )
                 action = FinishAttemptAction(message=arguments['message'])
 
-            elif tool_call.function.name == BrowsePreviousAttemptsTool['function']['name']:
-                action = BrowsePreviousAttemptsAction()
-
-            elif tool_call.function.name == ExpandPreviousAttemptTool['function']['name']:
+            elif tool_call.function.name == BrowseAttemptTool['function']['name']:
                 if 'id' not in arguments:
                     raise FunctionCallValidationError(
                         f'Missing required argument "id" in tool call {tool_call.function.name}'

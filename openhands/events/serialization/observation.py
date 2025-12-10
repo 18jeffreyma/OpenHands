@@ -13,6 +13,7 @@ from openhands.events.observation.agent import (
     FinishReflectionObservation,
     MicroagentKnowledge,
     RecallObservation,
+    SubmitAttemptAsFinalObservation,
 )
 from openhands.events.observation.browse import BrowserOutputObservation
 from openhands.events.observation.commands import (
@@ -63,6 +64,7 @@ observations = (
     ExpandPreviousAttemptObservation,
     FinishReflectionObservation,
     FinishCharacterizationObservation,
+    SubmitAttemptAsFinalObservation,
 )
 
 OBSERVATION_TYPE_TO_CLASS = {

@@ -901,7 +901,10 @@ class AgentController:
                 action = self.agent.step(self.state)
                 if action is None:
                     raise LLMNoActionError('No action was returned')
-                action._source = EventSource.AGENT  # type: ignore [attr-defined]
+                # Only set source to AGENT if not already set by the agent
+                # Use the safe .source property which returns None if _source not set
+                if action.source is None:
+                    action._source = EventSource.AGENT  # type: ignore [attr-defined]
             except (
                 LLMMalformedActionError,
                 LLMNoActionError,

@@ -38,9 +38,14 @@ from openhands.events.observation import (
     UserRejectObservation,
 )
 from openhands.events.observation.agent import (
+    BrowsePreviousAttemptsObservation,
+    ExpandPreviousAttemptObservation,
     FinishAttemptObservation,
+    FinishCharacterizationObservation,
+    FinishReflectionObservation,
     MicroagentKnowledge,
     RecallObservation,
+    SubmitAttemptAsFinalObservation,
 )
 from openhands.events.observation.error import ErrorObservation
 from openhands.events.observation.mcp import MCPObservation
@@ -530,6 +535,21 @@ class ConversationMemory:
             # LoopRecovery should not be observed by llm, handled internally.
             return []
         elif isinstance(obs, FinishAttemptObservation):
+            text = truncate_content(obs.content, max_message_chars)
+            message = Message(role='user', content=[TextContent(text=text)])
+        elif isinstance(obs, FinishCharacterizationObservation):
+            text = truncate_content(obs.content, max_message_chars)
+            message = Message(role='user', content=[TextContent(text=text)])
+        elif isinstance(obs, FinishReflectionObservation):
+            text = truncate_content(obs.content, max_message_chars)
+            message = Message(role='user', content=[TextContent(text=text)])
+        elif isinstance(obs, BrowsePreviousAttemptsObservation):
+            text = truncate_content(obs.content, max_message_chars)
+            message = Message(role='user', content=[TextContent(text=text)])
+        elif isinstance(obs, ExpandPreviousAttemptObservation):
+            text = truncate_content(obs.content, max_message_chars)
+            message = Message(role='user', content=[TextContent(text=text)])
+        elif isinstance(obs, SubmitAttemptAsFinalObservation):
             text = truncate_content(obs.content, max_message_chars)
             message = Message(role='user', content=[TextContent(text=text)])
         elif (

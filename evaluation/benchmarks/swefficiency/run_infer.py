@@ -84,7 +84,7 @@ def _get_swebench_workspace_dir_name(instance: pd.Series) -> str:
 
 def get_instruction(
     instance: pd.Series, metadata: EvalMetadata, initial_commit_hash: str | None = None
-) -> MessageAction:
+) -> tuple[MessageAction, str]:
     workspace_dir_name = _get_swebench_workspace_dir_name(instance)
 
     # TODO: Change to testbed?
@@ -100,9 +100,9 @@ I've uploaded a python code repository in the directory workspace_dir_name. Cons
 
 Can you help me implement the necessary changes to the repository so that the runtime of the `workload()` function is faster? Basic guidelines:
 1. Your task is to make changes to non-test files in the /workspace directory to improve the performance of the code running in `workload()`. Please do not directly change the implementation of the `workload()` function to optimize things: I want you to focus on making the workload AS IS run faster by only editing the repository containing code that the `workload()` function calls.
-2. Make changes while ensuring the repository is functionally equivalent to the original: your changes should not introduce new bugs or cause already-passing tests to begin failing after your changes. However, you do not need to worry about tests that already fail without any changes made. For relevant test files you find in the repository, you can run them via the bash command `{instance.test_cmd} <test_file>` to check for correctness. Note that running all the tests may take a long time, so you need to determine which tests are relevant to your changes.
-3. Make sure the `workload()` function improves in performance after you make changes to the repository. The workload can potentially take some time to run, so please allow it to finish and be generous with setting your timeout parameter (a timeout value of 3600 or larger here is encouraged): for faster iteration, you should adjust the workload script to use fewer iterations. Before you complete your task, please make sure to check that the **original performance workload** and `workload()` function runs successfully and the performance is improved.
-4. You may need to reinstall/rebuild the repo for your changes to take effect before testing if you made non-Python changes. Reinstalling may take a long time to run (a timeout value of 3600 or larger here is encouraged), so please be patient with running it and allow it to complete if possible. You can reinstall the repository by running the bash command `{instance.rebuild_cmd}` in the workspace directory.
+2. Make changes while ensuring the repository is functionally equivalent to the original: your changes should not introduce new bugs or cause already-passing tests to begin failing after your changes. However, you do not need to worry about tests that already fail without any changes made. For relevant test files you find in the repository, you can run them via the bash command `{instance.test_cmd} <test_file>` to check for correctness. Note that running all the tests may take a long time, so you need to determine which tests are relevant to your changes. Prefer running targeted tests (specific files or cases) instead of the full suite unless strictly necessary.
+3. The repository is already installed in editable mode. Rebuilding (`{instance.rebuild_cmd}`) is only needed if you make non-Python changes (e.g., C extensions or compiled assets); for pure Python edits, no rebuild is required.
+4. Make sure the `workload()` function improves in performance after you make changes to the repository. The workload can potentially take some time to run, so please allow it to finish and be generous with setting your timeout parameter (a timeout value of 3600 or larger here is encouraged): for faster iteration, you should adjust the workload script to use fewer iterations. Before you complete your task, please make sure to check that the **original performance workload** and `workload()` function runs successfully and the performance is improved.
 5. All the dependencies required to run the `workload()` function are already installed in the environment. You should not install or upgrade any dependencies.
 
 Follow these steps to improve performance:
@@ -130,7 +130,20 @@ The repository has been initialized at git commit {initial_commit_hash}. If you 
             '<IMPORTANT!>\nYou SHOULD NEVER attempt to browse the web. </IMPORTANT!>\n'
         )
 
-    return MessageAction(content=instruction)
+    conversation_instruction = f"""
+<uploaded_files>
+/workspace/{workspace_dir_name}
+</uploaded_files>
+
+I've uploaded a python code repository in the directory workspace_dir_name. Consider the following performance workload and `workload()` function showing an specific usage of the repository:
+<performance_workload>
+{instance.workload}
+</performance_workload>
+
+Task overview: You are tasked with improving the runtime of the provided performance workload by optimizing repository code paths that workload() exercises. You should not modify workload() itself; you need to preserve functional correctness and existing passing tests by only editing the repository code. When validating, run targeted tests (specific files or cases) relevant to your changes instead of the full suite unless absolutely necessary.
+"""
+
+    return MessageAction(content=instruction), conversation_instruction
 
 
 
@@ -680,7 +693,12 @@ def process_instance(
                     agent.extract_patch_cmd = extract_cmd
                     agent.apply_patch_cmd = apply_cmd
 
-            message_action = get_instruction(instance, metadata, initial_commit_hash)
+            message_action, conversation_instruction = get_instruction(instance, metadata, initial_commit_hash)
+
+            # Attach conversation instruction to the agent config for downstream phases (e.g., CHARACTERIZE).
+            if getattr(config.agent_config, 'extended', None) is None:
+                config.agent_config.extended = {}
+            config.agent_config.extended['conversation_instruction'] = conversation_instruction
 
             # Here's how you can run the agent (similar to the `main` function) and get the final task state
             state: State | None = asyncio.run(
