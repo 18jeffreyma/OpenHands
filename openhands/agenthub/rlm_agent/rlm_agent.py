@@ -117,9 +117,10 @@ class RLMAgent(Agent):
             config, key='rlm_apply_patch_cmd', env_key='RLM_APPLY_PATCH_CMD'
         )
 
+        attempt_prompt = self.config.resolved_system_prompt_filename
         self.phase_prompts = {
-            Phase.ATTEMPT: 'system_prompt_attempt.j2',
-            Phase.CHARACTERIZE: 'system_prompt_attempt.j2',
+            Phase.ATTEMPT: attempt_prompt,
+            Phase.CHARACTERIZE: attempt_prompt,
             Phase.REFLECT: 'system_prompt_reflect.j2',
         }
         self.characterize_transition_template = 'characterize_transition.j2'
@@ -167,7 +168,8 @@ class RLMAgent(Agent):
         env_val = os.environ.get('RLM_MAX_ITERATIONS')
         if env_val:
             return int(env_val)
-        return None
+        # default to 1 iteration if not specified
+        return 1
 
     def reset(self) -> None:
         super().reset()
@@ -344,14 +346,7 @@ class RLMAgent(Agent):
 
     def _guard_plain_reply(self, actions: list['Action']) -> list['Action']:
         if len(actions) == 1 and isinstance(actions[0], MessageAction):
-            if self.current_phase == Phase.CHARACTERIZE:
-                actions[0].content = (
-                    'Please summarize this attempt with finish_characterization(title, summary, validation, confidence, limitations).'
-                )
-            elif self.current_phase == Phase.REFLECT:
-                actions[0].content = (
-                    'Use finish_reflection(plan) or submit_attempt_as_final(attempt_id) to conclude REFLECT.'
-                )
+            actions[0].wait_for_response = False
         return actions
 
     def _queue_system_message(self, tools: list['ChatCompletionToolParam']) -> None:
@@ -388,15 +383,11 @@ class RLMAgent(Agent):
         if transition_messages:
             for msg in transition_messages:
                 self.pending_actions.append(
-                    MessageAction(content=msg, wait_for_response=True)
+                    MessageAction(content=msg, wait_for_response=False)
                 )
         self._queue_system_message(tools)
 
     def _handle_finish_attempt(self, action: FinishAttemptAction) -> None:
-        if not self.extract_patch_cmd:
-            raise ValueError(
-                'rlm_extract_patch_cmd is required to complete an attempt.'
-            )
         attempt_id = f'attempt-{len(self.attempts) + 1}'
         record = AttemptRecord(
             attempt_id=attempt_id,
@@ -408,15 +399,23 @@ class RLMAgent(Agent):
 
         self.pending_actions.append(action)
 
-        self._pending_extract_attempt_id = attempt_id
-        self._pending_extract_command = self.extract_patch_cmd
-        self.pending_actions.append(
-            MessageAction(
-                content=f'Extracting patch for {attempt_id} via `{self.extract_patch_cmd}`.',
-                wait_for_response=False,
+        if self.extract_patch_cmd:
+            # Run in the runtime via CmdRunAction but keep it hidden from the trajectory
+            self._pending_extract_attempt_id = attempt_id
+            self._pending_extract_command = self.extract_patch_cmd
+            self.pending_actions.append(
+                CmdRunAction(command=self.extract_patch_cmd, hidden=True)
             )
-        )
-        self.pending_actions.append(CmdRunAction(command=self.extract_patch_cmd))
+            logger.info(
+                'Extracting patch for %s via `%s` (hidden command).',
+                attempt_id,
+                self.extract_patch_cmd,
+            )
+        else:
+            logger.info(
+                'No rlm_extract_patch_cmd configured; skipping patch extraction for %s.',
+                attempt_id,
+            )
 
         transition_msg = self._render_characterize_transition(
             attempt_id=attempt_id, attempt_summary=action.message
@@ -624,13 +623,13 @@ class RLMAgent(Agent):
 
         if self.rlm_max_iterations is None and hasattr(state, 'iteration_flag'):
             runtime_max = getattr(state.iteration_flag, 'max_value', None)
-            # Only honor runtime/CLI if explicitly set; otherwise default to 3
+            # Honor runtime/CLI if explicitly set; otherwise default to 1
             if runtime_max and runtime_max != 100:
                 self.rlm_max_iterations = runtime_max
             else:
-                self.rlm_max_iterations = 3
+                self.rlm_max_iterations = 1
         if self.rlm_max_iterations is None:
-            self.rlm_max_iterations = 3
+            self.rlm_max_iterations = 1
 
         condensed_history: list[Event] = []
         match self.condenser.condensed_history(state):

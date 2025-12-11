@@ -49,7 +49,7 @@ from openhands.events.action.agent import (
     SubmitAttemptAsFinalAction,
 )
 from openhands.events.action.mcp import MCPAction
-from openhands.events.event import FileEditSource, FileReadSource
+from openhands.events.event import Event, FileEditSource, FileReadSource
 from openhands.events.tool import ToolCallMetadata
 from openhands.llm.tool_names import TASK_TRACKER_TOOL_NAME
 
@@ -415,6 +415,8 @@ def response_to_actions(
             # We only add thought to the first action
             if i == 0:
                 action = combine_thought(action, thought)
+            # Ensure newly created actions never carry an existing event id
+            action.id = Event.INVALID_ID
             # Add metadata for tool calling
             action.tool_call_metadata = ToolCallMetadata(
                 tool_call_id=tool_call.id,
@@ -424,40 +426,18 @@ def response_to_actions(
             )
             actions.append(action)
     else:
-        # Gemini occasionally returns a "stop" with no content/tool calls. If we turn that
+        # Gemini occasionally returns a "stop" with no tool calls. If we turn that
         # into a wait_for_response message, the controller will park the agent in
         # AWAITING_USER_INPUT and headless runs will hang. Instead, nudge the model to
         # reply again without blocking on user input.
-        def _is_empty_content(msg_content: object) -> bool:
-            if msg_content is None:
-                return True
-            if isinstance(msg_content, str):
-                return msg_content.strip() == ''
-            if isinstance(msg_content, list):
-                texts = [
-                    part.get('text', '')
-                    for part in msg_content
-                    if isinstance(part, dict) and part.get('type') == 'text'
-                ]
-                return all(not t.strip() for t in texts) if texts else True
-            return False
-
-        if _is_empty_content(assistant_msg.content):
+        if not getattr(assistant_msg, 'tool_calls', None):
             nudge = (
-                'Previous reply was empty. Please continue the task and respond with a '
-                'tool call (preferred) or a concise answer. Do not return empty content.'
+                'Please continue the task and respond with a tool call.'
             )
             actions.append(
                 MessageAction(
                     content=nudge,
                     wait_for_response=False,  # keep agent running; triggers another LLM step
-                )
-            )
-        else:
-            actions.append(
-                MessageAction(
-                    content=str(assistant_msg.content),
-                    wait_for_response=True,
                 )
             )
 
