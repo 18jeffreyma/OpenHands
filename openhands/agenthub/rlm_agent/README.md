@@ -56,16 +56,16 @@ After completing all iterations, the agent selects and applies the best attempt.
 - `task_tracker` (if `enable_plan_mode`) - Track tasks
 - `llm_based_edit` (if `enable_llm_editor`) or `str_replace_editor` (if `enable_editor`) - Edit files
 - `condensation_request` (if `enable_condensation_request`) - Request condensation
-- `finish_attempt` - Complete the attempt with a summary
+- `finish` - Complete the attempt with a summary
 
 **Flow:**
 ```
-ATTEMPT system prompt -> tool calls -> finish_attempt(summary)
+ATTEMPT system prompt -> tool calls -> finish(summary)
 ```
 
 **Behavior:**
 - Works directly on the task using available tools
-- Must call `finish_attempt` with a summary when done (successful or not)
+- Must call `finish` with a summary when done (successful or not)
 
 ### CHARACTERIZE Phase
 
@@ -76,12 +76,12 @@ ATTEMPT system prompt -> tool calls -> finish_attempt(summary)
 **Available Tools:**
 - `execute_bash` - Run tests, profiling, validation
 - `think` - Record analysis
-- `finish_characterization` - Complete with a semantic summary
+- `finish_characterization` - Complete with a title + semantic summary
 
 **Flow:**
 ```
 CHARACTERIZE system prompt -> characterize_transition message (user) ->
-tool calls (tests, profiling) -> finish_characterization(summary)
+tool calls (tests, profiling) -> finish_characterization(title, summary)
 ```
 
 **Behavior:**
@@ -158,26 +158,4 @@ The best attempt's patch is then applied (if `rlm_apply_patch_cmd` is configured
 | `rlm_extract_patch_cmd` | None | Command to extract patch after each attempt |
 | `rlm_apply_patch_cmd` | None | Command to apply the best attempt's patch |
 
-## File Structure
-
-```
-rlm_agent/
-├── rlm_agent.py           # Main agent implementation
-├── attempt_storage.py     # Storage for attempts and best-attempt selection
-├── function_calling.py    # Tool call parsing
-├── prompts/
-│   ├── system_prompt_attempt.j2      # ATTEMPT phase system prompt
-│   ├── system_prompt_characterize.j2 # CHARACTERIZE phase system prompt
-│   ├── system_prompt_reflect.j2      # REFLECT phase system prompt
-│   ├── characterize_transition.j2    # Transition message to CHARACTERIZE
-│   ├── reflect_transition.j2         # Transition message to REFLECT
-│   └── reflection_prompt.j2          # Prompt for best-attempt selection
-└── tools/
-    ├── attempt.py                    # finish_attempt tool
-    ├── finish_characterization.py    # finish_characterization tool
-    ├── finish_reflection.py          # finish_reflection tool
-    ├── browse_previous_attempts.py   # browse_previous_attempts tool
-    ├── expand_previous_attempt.py    # expand_previous_attempt tool
-    └── submit_attempt_as_final.py    # submit_attempt_as_final tool
-```
 

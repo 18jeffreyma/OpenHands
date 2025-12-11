@@ -1,11 +1,13 @@
-"""This file contains the function calling implementation for RLM agent actions.
+"""This file contains the function calling implementation for different actions.
 
-This is similar to the functionality of CodeActResponseParser.
+This is similar to the functionality of `CodeActResponseParser`.
 """
 
 import json
 
-from litellm import ModelResponse
+from litellm import (
+    ModelResponse,
+)
 
 from openhands.agenthub.codeact_agent.tools import (
     BrowserTool,
@@ -18,19 +20,6 @@ from openhands.agenthub.codeact_agent.tools import (
     create_str_replace_editor_tool,
 )
 from openhands.agenthub.codeact_agent.tools.security_utils import RISK_LEVELS
-from openhands.agenthub.rlm_agent.tools.attempt import FinishAttemptTool
-from openhands.agenthub.rlm_agent.tools.browse_attempt import (
-    BrowseAttemptTool,
-)
-from openhands.agenthub.rlm_agent.tools.finish_characterization import (
-    FinishCharacterizationTool,
-)
-from openhands.agenthub.rlm_agent.tools.finish_reflection import (
-    FinishReflectionTool,
-)
-from openhands.agenthub.rlm_agent.tools.submit_attempt_as_final import (
-    SubmitAttemptAsFinalTool,
-)
 from openhands.core.exceptions import (
     FunctionCallNotExistsError,
     FunctionCallValidationError,
@@ -42,20 +31,15 @@ from openhands.events.action import (
     AgentDelegateAction,
     AgentFinishAction,
     AgentThinkAction,
+    BrowseInteractiveAction,
     CmdRunAction,
-    ExpandPreviousAttemptAction,  # Keep class name for compatibility, but tool is now browse_attempt
     FileEditAction,
     FileReadAction,
-    FinishAttemptAction,
-    FinishCharacterizationAction,
-    FinishReflectionAction,
     IPythonRunCellAction,
     MessageAction,
-    SubmitAttemptAsFinalAction,
     TaskTrackingAction,
 )
 from openhands.events.action.agent import CondensationRequestAction
-from openhands.events.action.browse import BrowseInteractiveAction
 from openhands.events.action.mcp import MCPAction
 from openhands.events.event import FileEditSource, FileReadSource
 from openhands.events.tool import ToolCallMetadata
@@ -87,9 +71,7 @@ def set_security_risk(action: Action, arguments: dict) -> None:
 
 
 def response_to_actions(
-    response: ModelResponse,
-    mcp_tool_names: list[str] | None = None,
-    allowed_tools: set[str] | None = None,
+    response: ModelResponse, mcp_tool_names: list[str] | None = None
 ) -> list[Action]:
     actions: list[Action] = []
     assert len(response.choices) == 1, 'Only one choice is supported for now'
@@ -115,18 +97,6 @@ def response_to_actions(
                 raise FunctionCallValidationError(
                     f'Failed to parse tool call arguments: {tool_call.function.arguments}'
                 ) from e
-
-            # Guardrail: reject any tool call that was not offered in the current phase.
-            if (
-                allowed_tools is not None
-                and tool_call.function.name not in allowed_tools
-                and not (mcp_tool_names and tool_call.function.name in mcp_tool_names)
-            ):
-                allowed_list = ', '.join(sorted(allowed_tools))
-                raise FunctionCallNotExistsError(
-                    f'Tool {tool_call.function.name} is not allowed in the current phase. '
-                    f'Allowed tools: {allowed_list or "none"}.'
-                )
 
             # ================================================
             # CmdRunTool (Bash)
@@ -326,56 +296,6 @@ def response_to_actions(
                 )
 
             # ================================================
-            # RLM Agent Specific Tools
-            # ================================================
-            elif tool_call.function.name == FinishAttemptTool['function']['name']:
-                if 'message' not in arguments:
-                    raise FunctionCallValidationError(
-                        f'Missing required argument "message" in tool call {tool_call.function.name}'
-                    )
-                action = FinishAttemptAction(message=arguments['message'])
-
-            elif tool_call.function.name == BrowseAttemptTool['function']['name']:
-                if 'id' not in arguments:
-                    raise FunctionCallValidationError(
-                        f'Missing required argument "id" in tool call {tool_call.function.name}'
-                    )
-                action = ExpandPreviousAttemptAction(attempt_id=arguments['id'])
-
-            elif tool_call.function.name == FinishReflectionTool['function']['name']:
-                if 'message' not in arguments:
-                    raise FunctionCallValidationError(
-                        f'Missing required argument "message" in tool call {tool_call.function.name}'
-                    )
-                action = FinishReflectionAction(message=arguments['message'])
-
-            elif (
-                tool_call.function.name
-                == FinishCharacterizationTool['function']['name']
-            ):
-                if 'characterization_summary' not in arguments:
-                    raise FunctionCallValidationError(
-                        f'Missing required argument "characterization_summary" in tool call {tool_call.function.name}'
-                    )
-                action = FinishCharacterizationAction(
-                    characterization_summary=arguments['characterization_summary']
-                )
-
-            elif tool_call.function.name == SubmitAttemptAsFinalTool['function']['name']:
-                if 'attempt_id' not in arguments:
-                    raise FunctionCallValidationError(
-                        f'Missing required argument "attempt_id" in tool call {tool_call.function.name}'
-                    )
-                if 'message' not in arguments:
-                    raise FunctionCallValidationError(
-                        f'Missing required argument "message" in tool call {tool_call.function.name}'
-                    )
-                action = SubmitAttemptAsFinalAction(
-                    attempt_id=arguments['attempt_id'],
-                    message=arguments['message']
-                )
-
-            # ================================================
             # MCPAction (MCP)
             # ================================================
             elif mcp_tool_names and tool_call.function.name in mcp_tool_names:
@@ -416,6 +336,3 @@ def response_to_actions(
 
     assert len(actions) >= 1
     return actions
-
-
-

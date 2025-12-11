@@ -331,13 +331,15 @@ class FinishCharacterizationAction(Action):
     """
 
     characterization_summary: str = ''
+    characterization_title: str = ''
     thought: str = ''
     action: str = ActionType.FINISH_CHARACTERIZATION
     runnable: ClassVar[bool] = False
 
     @property
     def message(self) -> str:
-        return f'Characterization complete: {self.characterization_summary[:100]}...'
+        prefix = self.characterization_title or 'Characterization complete'
+        return f'{prefix}: {self.characterization_summary[:100]}...'
 
 
 @dataclass

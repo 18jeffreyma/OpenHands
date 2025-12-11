@@ -42,6 +42,7 @@ from openhands.core.exceptions import (
 from openhands.core.logger import LOG_ALL_EVENTS
 from openhands.core.logger import openhands_logger as logger
 from openhands.core.schema import AgentState
+from openhands.core.schema.action import ActionType
 from openhands.events import (
     EventSource,
     EventStream,
@@ -525,6 +526,9 @@ class AgentController:
         elif isinstance(action, AgentRejectAction):
             self.state.outputs = action.outputs
             await self.set_agent_state_to(AgentState.REJECTED)
+        elif hasattr(action, 'action') and getattr(action, 'action', None) == ActionType.FINISH_ATTEMPT:
+            # Non-terminal finish used by RLM to mark attempt completion; keep running.
+            self.event_stream.add_event(action, EventSource.AGENT)
         elif isinstance(action, LoopRecoveryAction):
             await self._handle_loop_recovery_action(action)
 

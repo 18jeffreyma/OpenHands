@@ -128,7 +128,7 @@ def test_characterize_without_attempt_bounces_back(monkeypatch):
 
     assert agent.current_phase == Phase.ATTEMPT
     assert isinstance(action, MessageAction)
-    assert 'finish_attempt' in action.content
+    assert 'finish' in action.content
 
 
 def test_characterize_rejects_disallowed_tool(monkeypatch):
