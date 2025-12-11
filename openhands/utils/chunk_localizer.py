@@ -6,7 +6,11 @@ for a given query (e.g. edit draft produced by the agent).
 
 from pydantic import BaseModel
 from rapidfuzz.distance import LCSseq
-from tree_sitter_language_pack import get_parser
+try:
+    from tree_sitter_language_pack import get_parser
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    def get_parser(_language=None):
+        return None
 
 from openhands.core.logger import openhands_logger as logger
 

@@ -1,25 +1,25 @@
-"""This file contains the function calling implementation for different actions.
-
-This is similar to the functionality of `CodeActResponseParser`.
-"""
+"""Function calling implementation for the RLM agent with phase-aware tool mapping."""
 
 import json
 
-from litellm import (
-    ModelResponse,
-)
+from litellm import ModelResponse
 
-from openhands.agenthub.codeact_agent.tools import (
+from openhands.agenthub.rlm_agent.tools import (
     BrowserTool,
+    BrowsePreviousAttemptsTool,
     CondensationRequestTool,
+    ExpandPreviousAttemptTool,
+    FinishCharacterizationTool,
+    FinishReflectionTool,
     FinishTool,
     IPythonTool,
     LLMBasedFileEditTool,
+    SubmitAttemptAsFinalTool,
     ThinkTool,
     create_cmd_run_tool,
     create_str_replace_editor_tool,
 )
-from openhands.agenthub.codeact_agent.tools.security_utils import RISK_LEVELS
+from openhands.agenthub.rlm_agent.tools.security_utils import RISK_LEVELS
 from openhands.core.exceptions import (
     FunctionCallNotExistsError,
     FunctionCallValidationError,
@@ -39,7 +39,15 @@ from openhands.events.action import (
     MessageAction,
     TaskTrackingAction,
 )
-from openhands.events.action.agent import CondensationRequestAction
+from openhands.events.action.agent import (
+    BrowsePreviousAttemptsAction,
+    CondensationRequestAction,
+    ExpandPreviousAttemptAction,
+    FinishAttemptAction,
+    FinishCharacterizationAction,
+    FinishReflectionAction,
+    SubmitAttemptAsFinalAction,
+)
 from openhands.events.action.mcp import MCPAction
 from openhands.events.event import FileEditSource, FileReadSource
 from openhands.events.tool import ToolCallMetadata
@@ -71,7 +79,9 @@ def set_security_risk(action: Action, arguments: dict) -> None:
 
 
 def response_to_actions(
-    response: ModelResponse, mcp_tool_names: list[str] | None = None
+    response: ModelResponse,
+    mcp_tool_names: list[str] | None = None,
+    allowed_tool_names: set[str] | None = None,
 ) -> list[Action]:
     actions: list[Action] = []
     assert len(response.choices) == 1, 'Only one choice is supported for now'
@@ -97,6 +107,14 @@ def response_to_actions(
                 raise FunctionCallValidationError(
                     f'Failed to parse tool call arguments: {tool_call.function.arguments}'
                 ) from e
+
+            # Phase-based allow list enforcement
+            if allowed_tool_names is not None:
+                if tool_call.function.name not in allowed_tool_names:
+                    raise FunctionCallNotExistsError(
+                        f'Tool {tool_call.function.name} is not allowed in this phase. '
+                        f'Allowed tools: {sorted(list(allowed_tool_names))}'
+                    )
 
             # ================================================
             # CmdRunTool (Bash)
@@ -145,8 +163,8 @@ def response_to_actions(
             # AgentFinishAction
             # ================================================
             elif tool_call.function.name == FinishTool['function']['name']:
-                action = AgentFinishAction(
-                    final_thought=arguments.get('message', ''),
+                action = FinishAttemptAction(
+                    message=arguments.get('message', ''),
                 )
 
             # ================================================
@@ -240,9 +258,90 @@ def response_to_actions(
                 action = CondensationRequestAction()
 
             # ================================================
+            # FinishCharacterizationAction
+            # ================================================
+            elif (
+                tool_call.function.name
+                == FinishCharacterizationTool['function']['name']
+            ):
+                if 'summary' not in arguments or 'title' not in arguments:
+                    raise FunctionCallValidationError(
+                        f'Missing required argument(s) in tool call {tool_call.function.name}'
+                    )
+                extras = []
+                if 'validation_results' in arguments:
+                    extras.append(f"Validation: {arguments['validation_results']}")
+                if 'confidence' in arguments:
+                    extras.append(f"Confidence: {arguments['confidence']}")
+                if 'limitations' in arguments:
+                    extras.append(f"Limitations: {arguments['limitations']}")
+
+                action = FinishCharacterizationAction(
+                    characterization_summary=arguments['summary'],
+                    characterization_title=arguments['title'],
+                    thought='\n'.join(extras) if extras else '',
+                )
+
+            # ================================================
+            # FinishReflectionAction
+            # ================================================
+            elif tool_call.function.name == FinishReflectionTool['function']['name']:
+                if 'plan' not in arguments:
+                    raise FunctionCallValidationError(
+                        f'Missing required argument "plan" in tool call {tool_call.function.name}'
+                    )
+                plan = arguments['plan']
+                risks = arguments.get('risks')
+                if risks:
+                    plan = f'{plan}\nRisks/Notes: {risks}'
+                action = FinishReflectionAction(message=plan)
+
+            # ================================================
+            # BrowsePreviousAttemptsAction
+            # ================================================
+            elif (
+                tool_call.function.name
+                == BrowsePreviousAttemptsTool['function']['name']
+            ):
+                attempt_ids = arguments.get('attempt_ids')
+                attempt_filter = ''
+                if isinstance(attempt_ids, list):
+                    attempt_filter = ','.join(str(a) for a in attempt_ids)
+                action = BrowsePreviousAttemptsAction(thought=attempt_filter)
+
+            # ================================================
+            # ExpandPreviousAttemptAction
+            # ================================================
+            elif (
+                tool_call.function.name == ExpandPreviousAttemptTool['function']['name']
+            ):
+                if 'attempt_id' not in arguments:
+                    raise FunctionCallValidationError(
+                        f'Missing required argument "attempt_id" in tool call {tool_call.function.name}'
+                    )
+                action = ExpandPreviousAttemptAction(
+                    attempt_id=arguments['attempt_id'],
+                )
+
+            # ================================================
+            # SubmitAttemptAsFinalAction
+            # ================================================
+            elif (
+                tool_call.function.name == SubmitAttemptAsFinalTool['function']['name']
+            ):
+                if 'attempt_id' not in arguments:
+                    raise FunctionCallValidationError(
+                        f'Missing required argument "attempt_id" in tool call {tool_call.function.name}'
+                    )
+                action = SubmitAttemptAsFinalAction(
+                    attempt_id=arguments['attempt_id'],
+                    message=arguments.get('message', ''),
+                )
+
+            # ================================================
             # BrowserTool
             # ================================================
-            elif tool_call.function.name == BrowserTool['function']['name']:
+            elif BrowserTool is not None and tool_call.function.name == BrowserTool['function']['name']:
                 if 'code' not in arguments:
                     raise FunctionCallValidationError(
                         f'Missing required argument "code" in tool call {tool_call.function.name}'
@@ -304,8 +403,13 @@ def response_to_actions(
                     arguments=arguments,
                 )
             else:
+                allowed_hint = (
+                    f' Allowed tools: {sorted(list(allowed_tool_names))}'
+                    if allowed_tool_names is not None
+                    else ''
+                )
                 raise FunctionCallNotExistsError(
-                    f'Tool {tool_call.function.name} is not registered. (arguments: {arguments}). Please check the tool name and retry with an existing tool.'
+                    f'Tool {tool_call.function.name} is not registered or not allowed. (arguments: {arguments}).{allowed_hint}'
                 )
 
             # We only add thought to the first action
@@ -320,12 +424,42 @@ def response_to_actions(
             )
             actions.append(action)
     else:
-        actions.append(
-            MessageAction(
-                content=str(assistant_msg.content) if assistant_msg.content else '',
-                wait_for_response=True,
+        # Gemini occasionally returns a "stop" with no content/tool calls. If we turn that
+        # into a wait_for_response message, the controller will park the agent in
+        # AWAITING_USER_INPUT and headless runs will hang. Instead, nudge the model to
+        # reply again without blocking on user input.
+        def _is_empty_content(msg_content: object) -> bool:
+            if msg_content is None:
+                return True
+            if isinstance(msg_content, str):
+                return msg_content.strip() == ''
+            if isinstance(msg_content, list):
+                texts = [
+                    part.get('text', '')
+                    for part in msg_content
+                    if isinstance(part, dict) and part.get('type') == 'text'
+                ]
+                return all(not t.strip() for t in texts) if texts else True
+            return False
+
+        if _is_empty_content(assistant_msg.content):
+            nudge = (
+                'Previous reply was empty. Please continue the task and respond with a '
+                'tool call (preferred) or a concise answer. Do not return empty content.'
             )
-        )
+            actions.append(
+                MessageAction(
+                    content=nudge,
+                    wait_for_response=False,  # keep agent running; triggers another LLM step
+                )
+            )
+        else:
+            actions.append(
+                MessageAction(
+                    content=str(assistant_msg.content),
+                    wait_for_response=True,
+                )
+            )
 
     # Add response id to actions
     # This will ensure we can match both actions without tool calls (e.g. MessageAction)

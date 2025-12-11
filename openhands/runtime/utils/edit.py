@@ -4,7 +4,13 @@ import tempfile
 from abc import ABC, abstractmethod
 from typing import Any
 
-from openhands_aci.utils.diff import get_diff  # type: ignore
+try:
+    from openhands_aci.utils.diff import get_diff  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    def get_diff(*args, **kwargs):
+        raise ModuleNotFoundError(
+            'openhands_aci is required for diff operations but is not installed.'
+        )
 
 from openhands.core.config import OpenHandsConfig
 from openhands.core.logger import openhands_logger as logger
@@ -188,6 +194,10 @@ class FileEditRuntimeMixin(FileEditRuntimeInterface):
         filepath: str,
         diff: str,
     ) -> ErrorObservation | None:
+        if DefaultLinter is None:
+            return ErrorObservation(
+                'Linting not available because openhands_aci is not installed.'
+            )
         linter = DefaultLinter()
         # Copy the original file to a temporary file (with the same ext) and lint it
         with (

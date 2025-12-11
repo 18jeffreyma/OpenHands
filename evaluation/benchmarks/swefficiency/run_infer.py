@@ -109,7 +109,7 @@ Follow these steps to improve performance:
 1. As a first step, explore the repository structure.
 2. Create a Python script to reproduce the performance workload, execute it with python <workload_file>, and examine the printed output metrics.
 3. Edit the source code of the repository to improve performance. Please do not change the contents of the `workload()` function itself, but focus on optimizing the code in the repository that the original `workload()` function uses.
-4. If non-Python changes were made, rebuild the repo to make sure the changes take effect.
+4. If non-Python changes were made, rebuild the repo to make sure the changes take effect. Otherwise, you can just run the `workload()` function to confirm that performance has improved.
 5. Rerun your script to confirm that performance has improved.
 6. If necessary, identify any relevant test files in the repository related to your changes and verify that test statuses did not change after your modifications.
 7. After each attempted change, please reflect on the changes attempted and the performance impact observed. If the performance did not improve, consider alternative approaches or optimizations.

@@ -272,12 +272,13 @@ class BrowsePreviousAttemptsAction(Action):
     """
 
     thought: str = ''
+    content: str = ''
     action: str = ActionType.BROWSE_PREVIOUS_ATTEMPTS
     runnable: ClassVar[bool] = False
 
     @property
     def message(self) -> str:
-        return 'Browsing previous attempts...'
+        return self.content or 'Browsing previous attempts...'
 
 
 @dataclass
@@ -292,12 +293,13 @@ class ExpandPreviousAttemptAction(Action):
 
     attempt_id: str = ''
     thought: str = ''
+    content: str = ''
     action: str = ActionType.EXPAND_PREVIOUS_ATTEMPT
     runnable: ClassVar[bool] = False
 
     @property
     def message(self) -> str:
-        return f'Expanding previous attempt: {self.attempt_id}'
+        return self.content or f'Expanding previous attempt: {self.attempt_id}'
 
 
 @dataclass

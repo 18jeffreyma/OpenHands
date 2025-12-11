@@ -1,24 +1,41 @@
 import importlib
 
 from openhands.runtime.base import Runtime
-from openhands.runtime.impl.cli.cli_runtime import CLIRuntime
-from openhands.runtime.impl.docker.docker_runtime import (
-    DockerRuntime,
-)
-from openhands.runtime.impl.kubernetes.kubernetes_runtime import KubernetesRuntime
-from openhands.runtime.impl.local.local_runtime import LocalRuntime
-from openhands.runtime.impl.remote.remote_runtime import RemoteRuntime
 from openhands.utils.import_utils import get_impl
 
+try:
+    from openhands.runtime.impl.cli.cli_runtime import CLIRuntime
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    CLIRuntime = None
+try:
+    from openhands.runtime.impl.docker.docker_runtime import DockerRuntime
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    DockerRuntime = None
+try:
+    from openhands.runtime.impl.kubernetes.kubernetes_runtime import KubernetesRuntime
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    KubernetesRuntime = None
+try:
+    from openhands.runtime.impl.local.local_runtime import LocalRuntime
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    LocalRuntime = None
+try:
+    from openhands.runtime.impl.remote.remote_runtime import RemoteRuntime
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    RemoteRuntime = None
+
 # mypy: disable-error-code="type-abstract"
-_DEFAULT_RUNTIME_CLASSES: dict[str, type[Runtime]] = {
-    'eventstream': DockerRuntime,
-    'docker': DockerRuntime,
-    'remote': RemoteRuntime,
-    'local': LocalRuntime,
-    'kubernetes': KubernetesRuntime,
-    'cli': CLIRuntime,
-}
+_DEFAULT_RUNTIME_CLASSES: dict[str, type[Runtime]] = {}
+if DockerRuntime:
+    _DEFAULT_RUNTIME_CLASSES.update({'eventstream': DockerRuntime, 'docker': DockerRuntime})
+if RemoteRuntime:
+    _DEFAULT_RUNTIME_CLASSES['remote'] = RemoteRuntime
+if LocalRuntime:
+    _DEFAULT_RUNTIME_CLASSES['local'] = LocalRuntime
+if KubernetesRuntime:
+    _DEFAULT_RUNTIME_CLASSES['kubernetes'] = KubernetesRuntime
+if CLIRuntime:
+    _DEFAULT_RUNTIME_CLASSES['cli'] = CLIRuntime
 
 # Try to import third-party runtimes if available
 _THIRD_PARTY_RUNTIME_CLASSES: dict[str, type[Runtime]] = {}
@@ -104,15 +121,10 @@ def get_runtime_cls(name: str) -> type[Runtime]:
 
 
 # Build __all__ list dynamically based on available runtimes
-__all__ = [
-    'Runtime',
-    'RemoteRuntime',
-    'DockerRuntime',
-    'KubernetesRuntime',
-    'CLIRuntime',
-    'LocalRuntime',
-    'get_runtime_cls',
-]
+__all__ = ['Runtime', 'get_runtime_cls']
+for runtime_cls in (RemoteRuntime, DockerRuntime, KubernetesRuntime, CLIRuntime, LocalRuntime):
+    if runtime_cls:
+        __all__.append(runtime_cls.__name__)
 
 # Add third-party runtimes to __all__ if they're available
 for runtime_name, runtime_class in _THIRD_PARTY_RUNTIME_CLASSES.items():

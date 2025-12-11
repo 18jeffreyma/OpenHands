@@ -2,17 +2,12 @@ from litellm import ChatCompletionToolParam, ChatCompletionToolParamFunctionChun
 
 from openhands.llm.tool_names import FINISH_TOOL_NAME
 
-_FINISH_DESCRIPTION = """Signals the completion of the current task or conversation.
+_FINISH_DESCRIPTION = """Signals completion of the current ATTEMPT (not the whole conversation).
 
-Use this tool when:
-- You have successfully completed the user's requested task
-- You cannot proceed further due to technical limitations or missing information
-
-The message should include:
-- A clear summary of actions taken and their results
-- Any next steps for the user
-- Explanation if you're unable to complete the task
-- Any follow-up questions if more information is needed
+Use this when you want to end the ATTEMPT phase:
+- Summarize actions taken and their results (even if partial)
+- Note open issues or blockers
+- Suggest next steps to try in later attempts
 """
 
 FinishTool = ChatCompletionToolParam(

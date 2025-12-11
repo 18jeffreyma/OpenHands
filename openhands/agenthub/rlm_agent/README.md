@@ -44,7 +44,7 @@ After completing all iterations, the agent selects and applies the best attempt.
 
 ### ATTEMPT Phase
 
-**System Prompt:** `system_prompt_attempt.j2`
+**System Prompt:** `system_prompt_attempt.j2` (also used for CHARACTERIZE, derived from CodeAct’s `system_prompt_long_horizon.j2`; tool gating is enforced in code, not via extra prompt blocks)
 
 **Context:** Full conversation history from the start of this attempt
 
@@ -64,12 +64,12 @@ ATTEMPT system prompt -> tool calls -> finish(summary)
 ```
 
 **Behavior:**
-- Works directly on the task using available tools
+- Works directly on the task using available tools (gated in code for this phase)
 - Must call `finish` with a summary when done (successful or not)
 
 ### CHARACTERIZE Phase
 
-**System Prompt:** `system_prompt_characterize.j2`
+**System Prompt:** `system_prompt_attempt.j2` (shared with ATTEMPT)
 
 **Context:** Full history from the attempt (to see what was done) + CHARACTERIZE phase events
 
@@ -80,14 +80,15 @@ ATTEMPT system prompt -> tool calls -> finish(summary)
 
 **Flow:**
 ```
-CHARACTERIZE system prompt -> characterize_transition message (user) ->
-tool calls (tests, profiling) -> finish_characterization(title, summary)
+Shared ATTEMPT/CHARACTERIZE system prompt
+-> characterize_transition message (rendered from `characterize_transition.j2`)
+-> tool calls (tests, profiling) -> finish_characterization(title, summary)
 ```
 
 **Behavior:**
 - Analyzes what was done in the attempt
 - Runs validation (tests, linting, performance checks)
-- Only the tools above are accepted in this phase; other tool calls are rejected
+- Only the tools above are accepted in this phase; other tool calls are rejected (gated in code)
 - Creates a comprehensive semantic summary including:
   - Title/label for the attempt
   - What was modified
@@ -132,13 +133,14 @@ Each phase has its own context to prevent confusion and context rot:
 | Phase | System Prompt | Initial Context |
 |-------|---------------|-----------------|
 | ATTEMPT | `system_prompt_attempt.j2` | Full history + previous reflection insights |
-| CHARACTERIZE | `system_prompt_characterize.j2` | Full history from attempt (to analyze what was done) |
+| CHARACTERIZE | `system_prompt_attempt.j2` | Full history from attempt (to analyze what was done) |
 | REFLECT | `system_prompt_reflect.j2` | Fresh - only REFLECT events + attempt summaries |
 
 **Transition Messages:**
-- All transition messages appear as **user messages** to properly instruct the LLM
-- Each phase transition updates the `conversation_memory.prompt_manager` to use the correct system prompt
-- CHARACTERIZE transition messages always include the attempt summary; REFLECT transitions send two user messages (summary list, then task)
+- All transition messages appear as **user messages** to properly instruct the LLM.
+- ATTEMPT → CHARACTERIZE uses a single message rendered from `characterize_transition.j2` (includes attempt id/summary and the `finish_characterization` instructions).
+- Each phase transition updates the `conversation_memory.prompt_manager` to use the correct system prompt (ATTEMPT prompt is reused for CHARACTERIZE).
+- REFLECT transitions send two user messages (summary list, then task).
 - Responses are parsed with phase-aware tool allow-lists: any tool not offered in the current phase raises `FunctionCallNotExistsError`
 
 ## Best Attempt Selection

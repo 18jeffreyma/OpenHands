@@ -1005,15 +1005,9 @@ fi
             elif isinstance(action, FinishAttemptAction):
                 return FinishAttemptObservation(content=action.message)
             elif isinstance(action, BrowsePreviousAttemptsAction):
-                # Return basic observation - agent will populate with attempt data
-                return BrowsePreviousAttemptsObservation(
-                    content='Browsing previous attempts...'
-                )
+                return BrowsePreviousAttemptsObservation(content=action.message)
             elif isinstance(action, ExpandPreviousAttemptAction):
-                # Return basic observation - agent will populate with attempt data
-                return ExpandPreviousAttemptObservation(
-                    content=f'Expanding attempt {action.attempt_id}...'
-                )
+                return ExpandPreviousAttemptObservation(content=action.message)
             elif isinstance(action, FinishReflectionAction):
                 return FinishReflectionObservation(content=action.message)
             elif isinstance(action, FinishCharacterizationAction):

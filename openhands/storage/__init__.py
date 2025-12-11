@@ -4,10 +4,8 @@ import httpx
 
 from openhands.storage.batched_web_hook import BatchedWebHookFileStore
 from openhands.storage.files import FileStore
-from openhands.storage.google_cloud import GoogleCloudFileStore
 from openhands.storage.local import LocalFileStore
 from openhands.storage.memory import InMemoryFileStore
-from openhands.storage.s3 import S3FileStore
 from openhands.storage.web_hook import WebHookFileStore
 from openhands.utils.http_session import httpx_verify_option
 
@@ -25,8 +23,16 @@ def get_file_store(
             raise ValueError('file_store_path is required for local file store')
         store = LocalFileStore(file_store_path)
     elif file_store_type == 's3':
+        from openhands.storage.s3 import S3FileStore
+
         store = S3FileStore(file_store_path)
     elif file_store_type == 'google_cloud':
+        try:
+            from openhands.storage.google_cloud import GoogleCloudFileStore
+        except ModuleNotFoundError as exc:  # pragma: no cover - optional dep
+            raise ModuleNotFoundError(
+                'google_cloud file store requested but google cloud dependencies are missing.'
+            ) from exc
         store = GoogleCloudFileStore(file_store_path)
     else:
         store = InMemoryFileStore()
