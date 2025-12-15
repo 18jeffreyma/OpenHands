@@ -1,0 +1,407 @@
+%%%%%%%% RLM-SWEfficiency ICML 2026 STYLE PAPER %%%%%%%%%%%%%%%%%
+
+\documentclass{article}
+
+% Recommended, but optional, packages for figures and better typesetting:
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{booktabs} % for professional tables
+
+% hyperref makes hyperlinks in the resulting PDF.
+\usepackage{hyperref}
+
+% Attempt to make hyperref and algorithmic work together better:
+\newcommand{\theHalgorithm}{\arabic{algorithm}}
+
+% Use the following line for the initial blind version submitted for review:
+% \usepackage[accepted]{icml2026}
+
+% For preprint, use
+\usepackage[preprint]{icml2026}
+
+% If accepted, instead use the following line for the camera-ready submission:
+% \usepackage[accepted]{icml2026}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{amsthm}
+
+% if you use cleveref..
+\usepackage[capitalize,noabbrev]{cleveref}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% THEOREMS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{assumption}[theorem]{Assumption}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+% Todonotes is useful during development; simply uncomment the next line
+%    and comment out the line below the next line to turn off comments
+%\usepackage[disable,textsize=tiny]{todonotes}
+\usepackage[textsize=tiny]{todonotes}
+
+% Short form for the running title:
+\icmltitlerunning{RLM-SWEfficiency: Recursive Context for SWE Optimization}
+
+\begin{document}
+
+\twocolumn[
+  \icmltitle{RLM-SWEfficiency: Recursive Context Management Toward\\ Expert-Level Performance Optimization}
+
+  % It is OKAY to include author information; the style
+  % will automatically hide it for blind review unless [accepted] is set.
+  \icmlsetsymbol{equal}{*}
+
+  \begin{icmlauthorlist}
+    \icmlauthor{Jeffrey Ma}{equal,yyy}
+    \icmlauthor{Arya Tschand}{equal,yyy}
+  \end{icmlauthorlist}
+
+  % For a real submission, replace this with your actual institution info
+  \icmlaffiliation{yyy}{Harvard University}
+
+  \icmlcorrespondingauthor{Jeffrey Ma}{jeffreyma@g.harvard.edu}
+  \icmlcorrespondingauthor{Arya Tschand}{aryatschand@g.harvard.edu}
+
+  \icmlkeywords{Performance Optimization, Software Engineering, Recursive Language Models, Agents}
+
+  \vskip 0.2in
+
+    \begin{center}
+    \begin{minipage}{0.8\textwidth}
+    \begin{abstract}
+    \vskip 0.2in
+    Most code-focused AI agents today are evaluated on bug fixing or small feature additions, but they perform poorly at performance engineering: taking already-correct code and making it significantly faster without changing behavior. Recent work (SWE-fficiency) shows that leading systems achieve a small fraction of expert-level speedup while frequently breaking tests, and that their performance degrades on long-horizon optimization trajectories. In this project, we propose \emph{RLM-SWEfficiency}, a recursive agent for performance optimization that explicitly manages its context through a three-phase iterative loop (ATTEMPT $\to$ CHARACTERIZE $\to$ REFLECT) and structured attempt records. Instead of concatenating every tool log and diff into an ever-growing prompt, the agent maintains compressed summaries of past attempts and uses recursive tool calls to query and expand them, following the Recursive Language Model (RLM) pattern. We evaluate RLM-SWEfficiency on the SWE-fficiency benchmark, measuring Speedup Ratio (SR) relative to expert solutions and comparing against non-recursive baselines. Our implementation reveals critical challenges in training modern LLMs to perform meta-reasoning and avoid optimization loops, requiring explicit architectural constraints and reminder mechanisms.
+    \end{abstract}
+    \end{minipage}
+    \end{center}
+
+
+  \vskip 0.3in
+]
+
+% This command actually creates the footnote in the first column listing the
+% affiliations and the copyright notice.
+\printAffiliationsAndNotice{}  % no special notice (required even if empty)
+
+\section{Introduction and Background}
+\label{sec:intro}
+Recent advances in large language models (LLMs) have produced AI coding agents that perform impressively on bug-fixing and small feature tasks, such as those captured by SWE-bench-style benchmarks. These agents can often make a failing test pass with a handful of edits in a small number of steps. However, this success hides a major gap: \emph{performance engineering}---making already-correct code run significantly faster while preserving behavior---remains largely unsolved.
+
+Performance optimization is qualitatively different from debugging. Instead of simply satisfying unit tests, the agent must:
+\begin{enumerate}
+    \item profile the code under realistic workloads,
+    \item localize true runtime bottlenecks,
+    \item propose high-leverage edits that alter algorithmic or data-access structure, and
+    \item iterate until additional speedup headroom is exhausted,
+\end{enumerate}
+all while preserving the program's original semantics. Modern software further separates correctness tests from performance workloads, so ``it passes tests'' is not evidence that it is fast.
+
+The SWE-fficiency benchmark formalizes this setting by giving agents (i) a real code repository, (ii) a reproducible workload for timing, and (iii) the repository's own tests. Agents are evaluated by \emph{Speedup Ratio} (SR), which normalizes their achieved speedup against an expert-optimized baseline and aggregates performance using a harmonic mean. In practice, current systems achieve SR values well below $0.05$, far from expert behavior, and they frequently break tests in the process.
+
+SWE-fficiency surfaces three key failure modes:
+\begin{itemize}
+    \item \textbf{Function-level mislocalization}: even when an agent edits the right file, it often edits the wrong functions. A large fraction of expert gains occur in functions the model never touches.
+    \item \textbf{Satisficing}: agents stop optimizing after finding a small speedup, typically within tens of actions, well before reaching expert-level improvements and well below the allowed horizon.
+    \item \textbf{Shortcut bias}: agents attempt ``reward hacks'' such as adding caches or fast-paths keyed to caller state, rather than genuinely reducing per-element cost. SWE-fficiency defends against these shortcuts via stack-frame checks and fork-per-run timing.
+\end{itemize}
+
+These issues are exacerbated by \emph{long horizons}. Performance optimization often requires tens to hundreds of tool calls and code edits. Most existing agent frameworks treat context as a simple append-only chat log: every observation, profile, test log, and diff is concatenated into a single prompt. This leads to:
+\begin{enumerate}
+    \item \textbf{Context rot}: the model loses track of which information is currently relevant.
+    \item \textbf{Computational inefficiency}: repeated re-serialization of large histories.
+    \item \textbf{Planning myopia}: no explicit structure over past attempts, making it hard to reason about what has been tried and where headroom remains.
+\end{enumerate}
+
+Recent work on \emph{Recursive Language Models} (RLMs) argues for a different view: context should be a first-class variable that the model can read and write via tools, rather than a passive sequence of tokens. In this project, we adopt that perspective for performance engineering and ask:
+
+\begin{quote}
+\emph{Can recursive context management and structured memory substantially improve an AI agent's ability to optimize real-world repositories, closing the gap with human performance engineers?}
+\end{quote}
+
+\section{Background}
+\label{sec:background}
+Our work sits at the intersection of three areas: performance-oriented software engineering benchmarks, recursive context management for LLM agents, and neurosymbolic approaches to program synthesis and optimization.
+
+\subsection{Performance-Oriented SWE Benchmarks}
+Traditional software engineering benchmarks for LLMs primarily emphasize \emph{correctness}: fixing bugs, resolving failing tests, or implementing missing functionality. While these tasks are important, they do not require sustained interaction with profiling tools or reasoning about runtime behavior.
+
+SWE-fficiency introduces a more realistic performance setting. Each task provides:
+\begin{itemize}
+    \item a real-world repository,
+    \item an associated workload used for timing, and
+    \item the repository's own correctness tests.
+\end{itemize}
+Agents are judged by their ability to achieve speedups on the workload while keeping tests passing. To compare agents fairly across tasks, SWE-fficiency reports a normalized Speedup Ratio (SR), defined as the agent's speedup divided by the expert's speedup, aggregated via the harmonic mean across tasks.
+
+Analysis of agent trajectories on SWE-fficiency reveals that current systems:
+\begin{enumerate}
+    \item frequently mislocalize bottlenecks, editing peripheral functions rather than hot paths,
+    \item terminate early after small improvements, and
+    \item attempt superficial changes (e.g., caching) that do not generalize across runs or workloads.
+\end{enumerate}
+These observations motivate architectures that (i) integrate profiling and localization more deeply, and (ii) reason explicitly about the space of optimization attempts over time.
+
+\subsection{Recursive Language Models and Context as a Variable}
+Standard LLM usage treats the prompt as an ever-growing linear history. For long-horizon tasks involving many tool calls and intermediate artifacts (logs, traces, diffs, metrics), this strategy is brittle and inefficient. It becomes difficult for the model to attend to the right information, and inference cost grows linearly with the number of steps.
+
+Recursive Language Models (RLMs) propose a different pattern: instead of passively accepting a prompt, the model:
+\begin{itemize}
+    \item issues tool calls to \emph{read} structured views of a task-specific state (e.g., ``top-k hot functions'' or ``summary of previous attempts on file X''), and
+    \item issues tool calls to \emph{write} compressed summaries or artifacts back into that state.
+\end{itemize}
+This turns context into a mutable variable stored in an external memory, accessed via a REPL-like loop. Sub-calls can operate on specific subproblems or views, enabling recursion over both data and reasoning steps. In practice, this mitigates context rot and makes it possible to handle unbounded histories.
+
+\subsection{Neurosymbolic Programming and Structured Memory}
+Neurosymbolic systems combine the open-ended reasoning of neural models with symbolic components that provide structure, guarantees, or efficient search. In program synthesis and optimization, a common pattern is:
+\begin{enumerate}
+    \item a neural model proposes candidate programs or patches, and
+    \item a symbolic engine verifies, executes, or scores these candidates according to formal or empirical criteria.
+\end{enumerate}
+
+For long-horizon agents, \emph{structured memory} has emerged as a key ingredient. Instead of storing a raw log of events, the agent maintains compressed records of attempts, results, and hypotheses. This enables:
+\begin{itemize}
+    \item targeted retrieval (e.g., ``retrieve summaries of all attempts'' or ``expand details of attempt-3''), and
+    \item explicit reasoning over a sequence of attempts, rather than a flat history.
+\end{itemize}
+
+Our implementation follows this philosophy by maintaining structured \texttt{AttemptRecord} objects that store summaries, characterizations, patches, and reflection plans. These records are queried via recursive tool calls (\texttt{browse\_previous\_attempts}, \texttt{expand\_previous\_attempt}) during REFLECT phase, enabling the agent to reason about past attempts without consuming the full raw history. This recursive query pattern is the core mechanism that supports the RLM-style loop in our agent.
+
+\section{Method}
+\label{sec:method}
+We propose \textbf{RLM-SWEfficiency}, a recursive agent for repository-level performance optimization. The core idea is to structure the optimization process into explicit phases that separate action from reflection, preventing context rot and enabling deliberate planning over multiple attempts.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.8\textwidth]{images/methodology.png}
+  \caption{High-level architecture of RLM-SWEfficiency. The agent alternates between three phases: ATTEMPT (active optimization work), CHARACTERIZE (analysis and validation), and REFLECT (review and planning). Each attempt produces a patch and summary that is stored in structured attempt records, which can be queried and expanded recursively during reflection.}
+  \label{fig:methodology}
+\end{figure*}
+
+\subsection{Three-Phase Iterative Architecture}
+The agent runs $N$ iterations (configurable via \texttt{rlm\_max\_iterations}, default: 3), with each iteration consisting of three distinct phases:
+
+\begin{enumerate}
+    \item \textbf{ATTEMPT}: The agent works directly on the optimization task using standard tools (bash commands, file editors, profilers). After implementing changes and running tests/workloads, it must call \texttt{finish} with a summary, even if the attempt is incomplete or failed.
+    \item \textbf{CHARACTERIZE}: The agent analyzes what was done in the attempt, runs validation (tests, profiling), and creates a structured summary including title, validation results, confidence level, and limitations.
+    \item \textbf{REFLECT}: The agent reviews summaries of all previous attempts, can expand specific attempts for details, and either plans the next attempt via \texttt{finish\_reflection} or submits a successful attempt as final via \texttt{submit\_attempt\_as\_final}.
+\end{enumerate}
+
+This three-phase structure enforces a separation of concerns: action happens in ATTEMPT, analysis in CHARACTERIZE, and meta-reasoning in REFLECT. Each phase has its own system prompt and tool allow-list, preventing the model from mixing concerns (e.g., trying to reflect while still in ATTEMPT phase).
+
+\subsection{Structured Attempt Records}
+Instead of maintaining a raw log of all events, the agent stores structured \emph{AttemptRecord} objects for each completed attempt. Each record contains:
+\begin{itemize}
+    \item \textbf{Attempt ID and iteration}: unique identifier and which iteration it belongs to
+    \item \textbf{Summary}: high-level description of what was attempted (from ATTEMPT phase)
+    \item \textbf{Characterization}: title, detailed summary, validation results, confidence level, and limitations (from CHARACTERIZE phase)
+    \item \textbf{Reflection plan}: plan for next attempt (from REFLECT phase)
+    \item \textbf{Patch}: extracted code diff (via \texttt{git diff} or similar) for later application
+    \item \textbf{History indices}: optional pointers to conversation history boundaries
+\end{itemize}
+
+During REFLECT phase, the agent can query these records through two recursive tools:
+\begin{itemize}
+    \item \texttt{browse\_previous\_attempts}: Returns summaries of all attempts (or filtered subset)
+    \item \texttt{expand\_previous\_attempt}: Returns full details of a specific attempt, including patch contents (truncated if large)
+\end{itemize}
+
+This design addresses context rot by compressing long optimization trajectories into structured summaries that can be queried on-demand. The agent never sees the full raw history of all attempts simultaneously; instead, it sees summaries and expands only what it needs.
+
+\subsection{Tool-Based Optimization Workflow}
+Rather than exposing specialized symbolic operators, RLM-SWEfficiency uses standard tools that the LLM composes into optimization strategies. The available tools vary by phase:
+
+\textbf{ATTEMPT phase} provides:
+\begin{itemize}
+    \item \texttt{execute\_bash}: Run shell commands (profiling, testing, git operations)
+    \item \texttt{str\_replace\_editor} or \texttt{llm\_based\_edit}: Modify code files
+    \item \texttt{ipython}: Execute Python code interactively
+    \item \texttt{think}: Record reasoning
+    \item \texttt{finish}: Complete the attempt with a summary
+\end{itemize}
+
+\textbf{CHARACTERIZE phase} restricts tools to:
+\begin{itemize}
+    \item \texttt{execute\_bash}: Run validation (tests, profiling)
+    \item \texttt{think}: Record analysis
+    \item \texttt{finish\_characterization}: Complete with structured characterization
+\end{itemize}
+
+\textbf{REFLECT phase} provides only reflection tools:
+\begin{itemize}
+    \item \texttt{browse\_previous\_attempts}: Query attempt summaries
+    \item \texttt{expand\_previous\_attempt}: Get full details of a specific attempt
+    \item \texttt{think}: Record reflection
+    \item \texttt{finish\_reflection}: Plan next attempt
+    \item \texttt{submit\_attempt\_as\_final}: Submit successful attempt early
+\end{itemize}
+
+This phase-based tool gating prevents the model from mixing concerns (e.g., trying to edit code during REFLECT phase) and enforces the recursive structure: the model must use reflection tools to query past attempts before planning the next one.
+
+\subsection{Recursive Context Management}
+The recursive aspect of RLM-SWEfficiency manifests in how the agent queries its own history. During REFLECT phase, the agent receives only:
+\begin{itemize}
+    \item Summaries of all attempts (via \texttt{browse\_previous\_attempts})
+    \item The current reflection system prompt
+\end{itemize}
+
+It never sees the full raw conversation history from ATTEMPT phases. Instead, if it needs details about a specific attempt, it issues a recursive call to \texttt{expand\_previous\_attempt}, which returns:
+\begin{itemize}
+    \item The attempt's summary and characterization
+    \item Validation results, confidence, and limitations
+    \item The patch diff (truncated if large)
+\end{itemize}
+
+This recursive query pattern treats context as a variable: the agent reads compressed views by default and expands only what it needs, rather than passively consuming an ever-growing prompt.
+
+\subsection{Patch Extraction and Application}
+After each ATTEMPT phase completes, the agent extracts a patch (typically via \texttt{git diff}) and stores it in the attempt record. These patches are filtered from the LLM's message history to avoid polluting context, but are available for:
+\begin{itemize}
+    \item Expansion during REFLECT phase (so the agent can see what changed)
+    \item Application after selecting the best attempt (via \texttt{git apply} or similar)
+\end{itemize}
+
+Before each new ATTEMPT, the repository is reset to a clean state (via \texttt{git reset --hard}), ensuring each attempt starts from the same baseline. This enables fair comparison across attempts and prevents cumulative errors from propagating.
+
+\subsection{Best Attempt Selection}
+After completing all iterations (or when \texttt{submit\_attempt\_as\_final} is called), the agent must select which attempt's patch to apply. The selection process:
+\begin{enumerate}
+    \item Filters to completed attempts (those with characterization summaries)
+    \item If only one attempt exists, selects it
+    \item Otherwise, uses the LLM to evaluate summaries and select the best attempt based on characterization titles, validation results, and confidence levels
+    \item Falls back to the most recent attempt if LLM selection fails
+\end{enumerate}
+
+The selected attempt's patch is then applied (if \texttt{rlm\_apply\_patch\_cmd} is configured), and the repository is reset to a clean state before application to ensure a clean slate.
+
+\section{Challenges and Failure Modes}
+\label{sec:challenges}
+During development and evaluation, we identified several critical failure modes that required explicit architectural constraints and prompt engineering to address. These challenges reveal limitations in how modern LLMs handle meta-reasoning and long-horizon planning.
+
+\subsection{Optimization Loop Prevention}
+A fundamental challenge is preventing the model from entering optimization loops during ATTEMPT phase. Without explicit constraints, models tend to:
+\begin{itemize}
+    \item Continue optimizing after seeing test results, rather than calling \texttt{finish}
+    \item Immediately revert or retry actions when tests fail, instead of documenting the failure
+    \item Make incremental improvements in a single attempt rather than committing to one approach
+\end{itemize}
+
+To address this, we implemented a \emph{reminder mechanism} that injects explicit reminders every $N$ steps (default: 5) during ATTEMPT phase, instructing the model to call \texttt{finish} immediately after seeing test results. The system prompt also emphasizes: ``ONE attempt = ONE test run + IMMEDIATE finish,'' and explicitly forbids reverting, fixing, or planning next steps after seeing results.
+
+Even with these constraints, models sometimes require multiple reminder cycles before complying, suggesting that the training distribution (which emphasizes completing tasks rather than meta-reasoning about when to stop) conflicts with this requirement.
+
+\subsection{Meta-Reasoning and Incomplete Attempts}
+A related challenge is training models to call \texttt{finish} even when an attempt is incomplete or failed. Standard LLM training emphasizes task completion, leading models to avoid ``admitting failure'' by calling finish prematurely. However, for iterative optimization, it is critical that failed attempts are documented so they can be analyzed in CHARACTERIZE and REFLECT phases.
+
+We address this through:
+\begin{itemize}
+    \item Explicit prompt instructions: ``Call finish IMMEDIATELY after seeing ANY test output/results - even if results show improvement, even if you see more optimization opportunities, even if results are partial.''
+    \item Examples showing correct behavior: finishing with a summary of what was tried and what happened, even if tests failed
+    \item Architectural enforcement: the model cannot proceed to CHARACTERIZE phase without calling \texttt{finish}
+\end{itemize}
+
+This represents a form of \emph{post-training} constraint: the model must learn to override its training-time preference for task completion in favor of meta-reasoning about iteration boundaries.
+
+\subsection{Reflection Loop Prevention}
+During REFLECT phase, models sometimes enter loops of repeatedly browsing or expanding attempts without progressing to planning. To prevent this:
+\begin{itemize}
+    \item We track which attempts have been expanded (\texttt{\_expanded\_attempt\_ids}) and prevent re-expansion
+    \item When all attempts have been expanded, we inject a strong reminder to call \texttt{finish\_reflection} or \texttt{submit\_attempt\_as\_final}
+    \item The reflection prompt explicitly instructs: ``Do NOT repeatedly call expand\_previous\_attempt - browse once, think, then finish''
+\end{itemize}
+
+\subsection{Context Filtering and Patch Management}
+Patch extraction and application commands (e.g., \texttt{git diff}, \texttt{git apply}, \texttt{git reset}) must be filtered from the LLM's message history to avoid polluting context, but they must still be observable by the agent's internal state machine. This requires careful matching of commands (accounting for shell variable expansion) and filtering at the message construction level.
+
+Similarly, repository reset commands must be hidden from the LLM (to avoid confusion about state) but executed reliably before each attempt. We handle this by marking reset commands as \texttt{hidden=True} and filtering them during message construction.
+
+\subsection{Model Post-Training Considerations}
+These challenges highlight a broader issue: modern LLMs are trained primarily on single-turn or short-horizon tasks, with an implicit bias toward task completion. For recursive, iterative agents, we need models that can:
+\begin{itemize}
+    \item Recognize when to stop one iteration and start another (meta-reasoning)
+    \item Document failures and incomplete attempts (overcoming completion bias)
+    \item Query structured memory recursively rather than relying on passive context
+\end{itemize}
+
+Our architectural constraints (phase-based tool gating, reminder mechanisms, explicit finish requirements) serve as a form of \emph{post-training alignment} that guides the model toward these behaviors. However, these constraints are brittle and require careful tuning. The fact that models often require multiple reminder cycles before complying suggests a fundamental mismatch between training objectives (complete the task) and agent requirements (document attempts, even incomplete ones).
+
+This raises interesting questions about the limits of prompt engineering and architectural constraints. Can we reliably guide models toward meta-reasoning through prompts alone, or do we need:
+\begin{itemize}
+    \item Fine-tuning models specifically for recursive agent patterns, with training examples that explicitly reward proper iteration boundaries?
+    \item Reinforcement learning from human feedback (RLHF) that rewards calling \texttt{finish} at appropriate times, even for incomplete attempts?
+    \item Architectural innovations that make meta-reasoning more natural (e.g., explicit iteration counters, structured state machines, or specialized tokens that signal phase transitions)?
+\end{itemize}
+
+Our experience suggests that while architectural constraints can partially address these issues, there may be fundamental limits to how far post-training alignment can push models beyond their training distribution. The recursive agent pattern may require models trained explicitly for this use case.
+
+\section{Experiments \& Results}
+\label{sec:experiments}
+At the time of writing, empirical experiments are still in progress. In this section, we sketch the planned evaluation protocol and the kinds of results we intend to report once the implementation is complete.
+
+\subsection{Benchmark and Setup}
+We will evaluate RLM-SWEfficiency on the SWE-fficiency benchmark, using the original repository-level tasks that separate correctness tests from performance workloads. For each task, we will:
+\begin{itemize}
+    \item initialize the agent on the unoptimized repository,
+    \item allow a fixed budget of tool calls (profiling, patching, tests, and workload runs), and
+    \item measure the final achieved speedup under the benchmark's standardized timing harness.
+\end{itemize}
+
+Speedup will be normalized to expert performance via Speedup Ratio (SR), and we will report harmonic means across tasks, following the benchmark's conventions.
+
+\subsection{Baselines}
+We plan to compare RLM-SWEfficiency against:
+\begin{itemize}
+    \item a non-recursive agent that logs all context in a flat prompt and does not use structured attempt records or phase separation,
+    \item a ``profile-only'' baseline that can see profiling information but lacks structured memory or recursive querying of attempts, and
+    \item optionally, existing open-source agent frameworks adapted to the SWE-fficiency setting.
+\end{itemize}
+
+\subsection{Planned Analyses}
+Once results are available, we intend to analyze:
+\begin{itemize}
+    \item \textbf{Overall performance}: SR improvements of RLM-SWEfficiency over baselines.
+    \item \textbf{Localization quality}: fraction of expert-optimized functions that the agent edits, and how this changes with structured memory.
+    \item \textbf{Satisficing behavior}: distribution of speedups at early vs.\ late attempts, and whether the agent continues to pursue headroom rather than stopping after small gains.
+    \item \textbf{Shortcut avoidance}: frequency of invalid shortcuts (e.g., brittle caching, input-specific hacks) and how the benchmark defenses interact with the agent's strategies.
+    \item \textbf{Ablations}: impact of removing recursive context management, disabling attempt expansion queries, removing phase separation, or collapsing attempt records into a simple log.
+\end{itemize}
+
+The final report will replace this placeholder section with quantitative results, tables, and figures drawn from these analyses.
+
+\section{Conclusion and Future Extensions}
+\label{sec:conclusion}
+We have outlined RLM-SWEfficiency, a recursive neurosymbolic agent aimed at closing the gap between current AI coding agents and expert performance engineers. Our motivation stems from the observation that existing systems perform poorly on performance optimization benchmarks like SWE-fficiency, suffering from mislocalization, satisficing, and shortcut bias. We argue that these failures are not just about local modeling errors, but also about how agent state and history are represented.
+
+Our implemented architecture couples:
+\begin{itemize}
+    \item a neural planner (the LLM) that works on optimization tasks, analyzes results, and plans next steps, with
+    \item a structured three-phase loop (ATTEMPT $\to$ CHARACTERIZE $\to$ REFLECT) that enforces separation of concerns and prevents context rot
+    \item attempt records that store compressed summaries and patches, queryable via recursive tools
+\end{itemize}
+By adopting the Recursive Language Model (RLM) pattern, RLM-SWEfficiency treats context as an explicit variable: the agent reads compressed summaries by default and expands only what it needs, rather than passively consuming an ever-growing prompt. This design supports deeper, more deliberate optimization cycles, though it requires explicit architectural constraints to overcome training-time biases toward task completion and single-turn interactions.
+
+There are several natural directions for future extensions:
+\begin{itemize}
+    \item \textbf{Richer static analysis}: incorporating static analyzers and type checkers into the symbolic tool layer to catch subtle correctness regressions and guide safer patch proposals.
+    \item \textbf{Multi-objective optimization}: extending the framework to jointly consider performance, memory usage, and energy consumption, possibly via multi-objective search in the Attempt Graph.
+    \item \textbf{Cross-task learning}: using patterns discovered on one repository (e.g., common anti-patterns in data processing or numerical kernels) to inform priors on new tasks.
+    \item \textbf{Deeper recursion}: enabling nested sub-agents specializing in particular subsystems or libraries, which can be invoked recursively from the main planner.
+\end{itemize}
+
+Once experiments on SWE-fficiency are complete, we expect to refine these ideas based on empirical evidence, identifying which aspects of recursive context management and structured memory offer the largest gains. Ultimately, we hope this line of work contributes to AI systems that can perform end-to-end performance engineering on complex software, approaching the reliability and sophistication of expert human developers.
+
+% (Optional) Bibliography — you can change the .bib file name
+\bibliography{example_paper}
+\bibliographystyle{icml2026}
+
+\end{document}

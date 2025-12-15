@@ -60,13 +60,136 @@ RUN_WITH_BROWSING = os.environ.get('RUN_WITH_BROWSING', 'false').lower() == 'tru
 BenchMode = Literal['swe', 'swt', 'swt-ci']
 
 
-def rlm_user_response(state: State) -> MessageAction | None:
-    """User response function for RLM agent.
+def _detect_rlm_phase(state: State) -> str:
+    """Detect the current RLM agent phase from state.
 
-    The RLM agent handles its own phase transitions internally,
-    so we don't need to provide fake user responses like CodeAct.
+    Returns: 'attempt', 'characterize', 'reflect', or 'complete'
+
+    This function reads the phase directly from state.extra_data['rlm_phase'], which is
+    maintained by RLMAgent. This is the most reliable method as it reflects the agent's
+    actual internal phase state.
+
+    Falls back to 'attempt' if the phase is not set (e.g., for non-RLM agents or before
+    the first step).
     """
-    return None
+    # Read phase directly from state.extra_data - this is set by RLMAgent.step()
+    phase = state.extra_data.get('rlm_phase', 'attempt')
+
+    # Validate phase value
+    if phase not in ('attempt', 'characterize', 'reflect', 'complete'):
+        from openhands.core.logger import openhands_logger as logger
+        logger.warning(
+            f'rlm_user_response: invalid phase value in extra_data: {phase}, defaulting to attempt'
+        )
+        return 'attempt'
+
+    return phase
+
+
+def rlm_user_response(
+    state: State,
+    encapsulate_solution: bool = False,
+    try_parse: Any = None,
+) -> str | None:
+    """User response function for RLM agent that adapts based on current phase.
+
+    - ATTEMPT phase: Encourages continuation and calling finish when done
+    - CHARACTERIZE phase: Encourages running validation and calling finish_characterization
+    - REFLECT phase: Encourages browsing attempts and calling finish_reflection or submit_attempt_as_final
+    """
+    phase = _detect_rlm_phase(state)
+
+    # Log phase detection for debugging
+    from openhands.core.logger import openhands_logger as logger
+    # Check for recent phase transition actions to help debug
+    recent_actions = []
+    for event in reversed(state.history[:10] if len(state.history) > 10 else state.history):
+        action_type = type(event).__name__
+        if 'Finish' in action_type and 'Action' in action_type:
+            recent_actions.append(action_type)
+    logger.debug(
+        f'rlm_user_response: detected phase={phase}, history_length={len(state.history) if state.history else 0}, '
+        f'recent_phase_actions={recent_actions[:3]}'
+    )
+
+    # If phase detection is uncertain, default to attempt phase
+    if phase not in ('attempt', 'characterize', 'reflect'):
+        logger.warning(f'rlm_user_response: unexpected phase={phase}, defaulting to attempt')
+        phase = 'attempt'
+
+    if phase == 'attempt':
+        # For ATTEMPT phase, use codeact_user_response behavior
+        encaps_str = (
+            (
+                'Your final answer MUST be encapsulated within <solution> and </solution>.\n'
+                'For example: The answer to the question is <solution> 42 </solution>.\n'
+            )
+            if encapsulate_solution
+            else ''
+        )
+        msg = (
+            'Please continue working on the task on whatever approach you think is suitable.\n'
+            'Please continue: when you think you have finished implementing your current attempt and run tests, call `finish` even if results are partial/failed or if your edit did not work as expected.\n'
+            f'{encaps_str}'
+            'IMPORTANT: YOU SHOULD NEVER ASK FOR HUMAN HELP.\n'
+        )
+
+        if state.history:
+            # Check if the last action has an answer, if so, early exit
+            if try_parse is not None:
+                from openhands.events.action import Action
+                last_action = next(
+                    (
+                        event
+                        for event in reversed(state.history)
+                        if isinstance(event, Action)
+                    ),
+                    None,
+                )
+                ans = try_parse(last_action)
+                if ans is not None:
+                    return '/exit'
+
+            # Check if the agent has tried to talk to the user multiple times
+            user_msgs = [
+                event
+                for event in state.history
+                if isinstance(event, MessageAction) and event.source == 'user'
+            ]
+            if len(user_msgs) >= 2:
+                # Let the agent know that it can give up when it has tried multiple times
+                return (
+                    msg
+                    + 'If you want to give up, use the "finish" tool to finish the interaction.\n'
+                )
+        return msg
+
+    elif phase == 'characterize':
+        # For CHARACTERIZE phase, encourage running tests/validation and calling finish_characterization
+        msg = (
+            'Please continue: you are in CHARACTERIZE phase. Run tests, linting, or performance checks to validate the attempt.\n'
+            'Please continue: once you have finished characterizing, use the finish_characterization tool with what changed, validation results (tests/lint/perf), confidence level, and any limitations.\n'
+            'IMPORTANT: YOU SHOULD NEVER ASK FOR HUMAN HELP.\n'
+        )
+        return msg
+
+    elif phase == 'reflect':
+        # For REFLECT phase, encourage using think tool to reflect and only expanding if needed
+        msg = (
+            'Please continue: you are in REFLECT phase. Use `think` to reflect out loud on what worked and what didn\'t.\n'
+            'Please continue: Browse attempts to see summaries, but only expand if you need specific implementation details.\n'
+            'Please continue: After reflecting, call `finish_reflection` with a plan for the next attempt, or `submit_attempt_as_final` if an attempt succeeded.\n'
+            'IMPORTANT: YOU SHOULD NEVER ASK FOR HUMAN HELP.\n'
+        )
+        return msg
+
+    # Fallback: if phase detection failed or returned unexpected value, use attempt phase message
+    # This prevents getting stuck when phase detection is uncertain
+    return (
+        'Please continue working on the task on whatever approach you think is suitable.\n'
+        'Please continue: when you think you have finished implementing your current attempt and run tests, call `finish` even if results are partial/failed or if your edit did not work as expected.\n'
+        'IMPORTANT: YOU SHOULD NEVER ASK FOR HUMAN HELP.\n'
+    )
 
 
 AGENT_CLS_TO_FAKE_USER_RESPONSE_FN = {
@@ -88,7 +211,7 @@ def get_instruction(instance: pd.Series, metadata: EvalMetadata) -> MessageActio
 /workspace/{workspace_dir_name}
 </uploaded_files>
 
-I've uploaded a python code repository in the directory workspace_dir_name. Consider the following performance workload and `workload()` function showing an specific usage of the repository:
+I've uploaded a python code repository in the directory {workspace_dir_name}. Consider the following performance workload and `workload()` function showing an specific usage of the repository:
 <performance_workload>
 {instance.workload}
 </performance_workload>
@@ -102,7 +225,7 @@ Can you help me implement the necessary changes to the repository so that the ru
 
 Follow these steps to improve performance:
 1. As a first step, explore the repository structure.
-2. Create a Python script to reproduce the performance workload, execute it with python <workload_file>, and examine the printed output metrics.
+2. Create a Python script in the workspace to reproduce the performance workload, execute it with python <workload_file>, and examine the printed output metrics.
 3. Edit the source code of the repository to improve performance. Please do not change the contents of the `workload()` function itself, but focus on optimizing the code in the repository that the original `workload()` function uses.
 4. If non-Python changes were made, rebuild the repo to make sure the changes take effect. Otherwise, you can just run the `workload()` function to confirm that performance has improved.
 5. Rerun your script to confirm that performance has improved.
@@ -214,10 +337,16 @@ def get_config(
         extended=ExtendedConfig({
             'rlm_max_iterations': rlm_max_iterations,
             'rlm_phase_log_dir': rlm_phase_log_dir,
-            # Provide patch commands for the RLM agent so ATTEMPT completion works.
-            # Use the instance's base_commit to extract a diff, and apply via stdin.
-            'rlm_extract_patch_cmd': f'git diff --no-color {instance["base_commit"]}',
+            # Provide patch commands for the agent so ATTEMPT completion works.
+            # Use the latest repo commit (captured at runtime) to extract a diff, and apply via stdin.
+            'rlm_extract_patch_cmd': f'git diff --no-color "${{REPO_BASE_COMMIT:-{instance["base_commit"]}}}"',
             'rlm_apply_patch_cmd': 'git apply -',
+            # Reset to the original head before each ATTEMPT.
+            # Using only git reset --hard (no git clean) for faster resets.
+            # git clean -fd can be slow and isn't necessary for resetting tracked files.
+            'rlm_reset_cmd': (
+                f'git reset --hard "${{REPO_BASE_COMMIT:-{instance["base_commit"]}}}"'
+            ),
         }),
     )
 
@@ -328,6 +457,24 @@ def initialize_runtime(
     assert_and_raise(
         obs.exit_code == 0,
         f'Failed to cd to /workspace/{workspace_dir_name}: {str(obs)}',
+    )
+
+    # Capture the current repo head to use for resets/patch extraction.
+    action = CmdRunAction(
+        command=(
+            'BASE_COMMIT=$(git rev-parse HEAD) && '
+            'echo "REPO_BASE_COMMIT=${BASE_COMMIT}" && '
+            'echo "export REPO_BASE_COMMIT=${BASE_COMMIT}" >> ~/.bashrc && '
+            'export REPO_BASE_COMMIT=${BASE_COMMIT}'
+        )
+    )
+    action.set_hard_timeout(600)
+    logger.info(action, extra={'msg_type': 'ACTION'})
+    obs = runtime.run_action(action)
+    logger.info(obs, extra={'msg_type': 'OBSERVATION'})
+    assert_and_raise(
+        isinstance(obs, CmdOutputObservation) and obs.exit_code == 0,
+        f'Failed to capture base commit: {str(obs)}',
     )
 
 

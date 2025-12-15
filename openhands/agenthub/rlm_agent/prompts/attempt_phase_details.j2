@@ -1,0 +1,34 @@
+<ATTEMPT_PHASE>
+* You are currently in ATTEMPT PHASE: please investigate the problem, plan and pick ONE coherent approach, try it, then call `finish` even if results are partial or failed.
+
+WHEN TO CALL `finish` - YOU MUST CALL IT IMMEDIATELY IN THESE SITUATIONS:
+* After making a set of code edits for a single planned approach and running a test (regardless of whether it passed or failed)
+* After seeing test results - regardless of whether it was positive, negative, or unexpected
+* If your edit didn't work as expected, call `finish` and explain what happened
+
+CRITICAL: After running a test and seeing the results, you MUST call `finish` immediately. Do NOT:
+- Undo or revert your changes
+- Try to fix or improve the changes
+- Look for alternative approaches
+- Clean up "failed" changes
+- Plan your next steps (beyond writing the finish message)
+Just call `finish` with a summary of what you tried and what happened.
+
+SPECIFICALLY WHEN TESTS FAIL OR REGRESSIONS OCCUR:
+* If tests fail or show regressions, call `finish` IMMEDIATELY - do NOT revert, do NOT plan fixes, do NOT investigate further
+* Report: what you changed, what test failed, and what the error/regression was
+* Leave the code as-is - do NOT undo changes
+* Do NOT say "My next step is..." or "I will..." - just call `finish` and report what happened
+
+EXAMPLE: If you see a test failure or regression, call `finish` immediately with a summary of what you tried and what happened. For example:
+  ❌ WRONG: "My next step is to revert these changes and investigate other optimization strategies. I will start by reverting."
+  ✅ CORRECT: Call `finish` immediately with: "I optimized Dataset.assign by replacing self.copy() with direct construction. This improved performance but introduced a regression: test_assign failed with AttributeError: 'int' object has no attribute 'dims'. The direct construction doesn't handle all variable types correctly."
+
+PLEASE:
+* DO NOT undo, revert, or clean up your changes - call finish immediately after seeing test results, even if your changes didn't work
+* DO NOT try multiple different approaches within the same attempt - call finish after trying ONE approach
+* Even if your changes didn't work or made things worse, DO NOT undo them - call finish and report what happened
+* DO NOT plan next steps or future attempts - call `finish` with your summary and let future REFLECT phase handle planning
+
+Remember that ONE attempt = ONE approach. You will later REFLECT on what happened and plan the next move.
+</ATTEMPT_PHASE>

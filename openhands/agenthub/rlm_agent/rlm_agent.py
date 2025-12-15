@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections import deque
 from dataclasses import dataclass
@@ -108,6 +109,7 @@ class RLMAgent(Agent):
         self._pending_extract_command: str | None = None
         self._pending_apply_attempt_id: str | None = None
         self._pending_apply_command: str | None = None
+        self._expanded_attempt_ids: set[str] = set()  # Track which attempts have been expanded to prevent loops
 
         self.rlm_max_iterations: int | None = self._resolve_max_iterations()
         self.extract_patch_cmd = self._resolve_optional_env(
@@ -116,6 +118,13 @@ class RLMAgent(Agent):
         self.apply_patch_cmd = self._resolve_optional_env(
             config, key='rlm_apply_patch_cmd', env_key='RLM_APPLY_PATCH_CMD'
         )
+        self.reset_repo_cmd = self._resolve_optional_env(
+            config, key='rlm_reset_cmd', env_key='RLM_RESET_CMD'
+        )
+
+        # Reminder mechanism: track steps in ATTEMPT phase and remind periodically
+        self._attempt_phase_step_count: int = 0
+        self._reminder_step_interval: int = 5  # Default: remind every 5 steps (0 to disable) - more frequent to catch optimization loops
 
         attempt_prompt = self.config.resolved_system_prompt_filename
         self.phase_prompts = {
@@ -174,6 +183,8 @@ class RLMAgent(Agent):
     def reset(self) -> None:
         super().reset()
         self.pending_actions.clear()
+        self._attempt_phase_step_count = 0
+        self._expanded_attempt_ids.clear()
 
     def _get_tools_for_phase(self, phase: Phase) -> list['ChatCompletionToolParam']:
         SHORT_TOOL_DESCRIPTION_LLM_SUBSTRS = ['gpt-4', 'o3', 'o1', 'o4']
@@ -267,8 +278,60 @@ class RLMAgent(Agent):
     def _get_messages(
         self, events: list[Event], initial_user_message: MessageAction
     ) -> list[Message]:
+        # Filter out patch extraction/application commands and their observations from LLM messages
+        # Also filter reset commands to avoid tool metadata issues
+        filtered_events = []
+        for event in events:
+            should_filter = False
+            if isinstance(event, (CmdRunAction, CmdOutputObservation)):
+                event_cmd = event.command
+
+                # Check extract command: match against pending (expanded), original template, or expanded template
+                if self.extract_patch_cmd:
+                    if (self._pending_extract_command and event_cmd == self._pending_extract_command) or \
+                       event_cmd == self.extract_patch_cmd or \
+                       event_cmd == self._expand_shell_vars(self.extract_patch_cmd):
+                        should_filter = True
+                    # Fallback: match by base pattern "git diff"
+                    if not should_filter:
+                        extract_base = self.extract_patch_cmd.split()[0:2] if self.extract_patch_cmd else []
+                        event_base = event_cmd.split()[0:2] if event_cmd else []
+                        if extract_base and event_base and len(extract_base) == 2 and extract_base == event_base:
+                            if extract_base[0] == 'git' and extract_base[1] == 'diff':
+                                should_filter = True
+
+                # Check apply command: match against pending (expanded), original template, or expanded template
+                if not should_filter and self.apply_patch_cmd:
+                    if (self._pending_apply_command and event_cmd == self._pending_apply_command) or \
+                       event_cmd == self.apply_patch_cmd or \
+                       event_cmd == self._expand_shell_vars(self.apply_patch_cmd):
+                        should_filter = True
+                    # Fallback: match by base pattern "git apply"
+                    if not should_filter:
+                        apply_base = self.apply_patch_cmd.split()[0:2] if self.apply_patch_cmd else []
+                        event_base = event_cmd.split()[0:2] if event_cmd else []
+                        if apply_base and event_base and len(apply_base) == 2 and apply_base == event_base:
+                            if apply_base[0] == 'git' and apply_base[1] == 'apply':
+                                should_filter = True
+
+                # Check reset command: match against original template or expanded template
+                if not should_filter and self.reset_repo_cmd:
+                    reset_expanded = self._expand_shell_vars(self.reset_repo_cmd)
+                    if event_cmd == self.reset_repo_cmd or event_cmd == reset_expanded:
+                        should_filter = True
+                    # Fallback: match by base pattern "git reset"
+                    if not should_filter:
+                        reset_base = reset_expanded.split()[0:2] if reset_expanded else []
+                        event_base = event_cmd.split()[0:2] if event_cmd else []
+                        if reset_base and event_base and len(reset_base) == 2 and reset_base == event_base:
+                            if reset_base[0] == 'git' and reset_base[1] == 'reset':
+                                should_filter = True
+
+            if not should_filter:
+                filtered_events.append(event)
+
         messages = self.conversation_memory.process_events(
-            condensed_history=events,
+            condensed_history=filtered_events,
             initial_user_action=initial_user_message,
             max_message_chars=self.llm.config.max_message_chars,
             vision_is_active=self.llm.vision_is_active(),
@@ -285,7 +348,8 @@ class RLMAgent(Agent):
             content=[
                 TextContent(
                     text=self.prompt_manager.get_system_message(
-                        cli_mode=self.config.cli_mode
+                        cli_mode=self.config.cli_mode,
+                        rlm_attempt_phase=False,  # REFLECT phase, not ATTEMPT
                     )
                 )
             ],
@@ -305,7 +369,29 @@ class RLMAgent(Agent):
                 )
             ],
         )
-        return [system_message, summary_msg, task_msg]
+        # Filter out empty text content from messages
+        messages = [system_message, summary_msg, task_msg]
+        filtered_messages = []
+        for msg in messages:
+            filtered_content = [
+                item
+                for item in msg.content
+                if not (isinstance(item, TextContent) and item.text == '')
+            ]
+            if filtered_content:
+                filtered_msg = Message(
+                    role=msg.role,
+                    content=filtered_content,
+                    cache_enabled=msg.cache_enabled,
+                    vision_enabled=msg.vision_enabled,
+                    function_calling_enabled=msg.function_calling_enabled,
+                    tool_calls=msg.tool_calls,
+                    tool_call_id=msg.tool_call_id,
+                    name=msg.name,
+                    force_string_serializer=msg.force_string_serializer,
+                )
+                filtered_messages.append(filtered_msg)
+        return filtered_messages
 
     def _process_new_observations(self, state: State) -> None:
         for event in state.history:
@@ -316,14 +402,34 @@ class RLMAgent(Agent):
                 if (
                     self._pending_extract_attempt_id
                     and self._pending_extract_command
-                    and event.command == self._pending_extract_command
                 ):
-                    attempt = self._find_attempt(self._pending_extract_attempt_id)
-                    if attempt:
-                        attempt.patch = event.content
-                        attempt.patch_exit_code = event.exit_code
-                    self._pending_extract_attempt_id = None
-                    self._pending_extract_command = None
+                    # Match commands - handle environment variable expansion differences
+                    # Match if exact match, or if both start with same base command (first 2 words)
+                    pending_parts = self._pending_extract_command.split()[:2] if self._pending_extract_command else []
+                    obs_parts = event.command.split()[:2] if event.command else []
+                    commands_match = (
+                        event.command == self._pending_extract_command
+                        or (pending_parts and obs_parts and pending_parts == obs_parts)
+                    )
+
+                    if commands_match:
+                        attempt = self._find_attempt(self._pending_extract_attempt_id)
+                        if attempt:
+                            attempt.patch = event.content
+                            attempt.patch_exit_code = event.exit_code
+                            logger.info(
+                                'Processed patch extraction for %s (exit_code=%s, patch_length=%d)',
+                                self._pending_extract_attempt_id,
+                                event.exit_code,
+                                len(event.content) if event.content else 0,
+                            )
+                        else:
+                            logger.warning(
+                                'Patch extraction observation received but attempt %s not found',
+                                self._pending_extract_attempt_id,
+                            )
+                        self._pending_extract_attempt_id = None
+                        self._pending_extract_command = None
                 if (
                     self._pending_apply_attempt_id
                     and self._pending_apply_command
@@ -335,6 +441,15 @@ class RLMAgent(Agent):
                     self._pending_apply_attempt_id = None
                     self._pending_apply_command = None
 
+                # Log git reset commands for debugging
+                if event.command and 'git reset' in event.command:
+                    logger.info(
+                        'Git reset command observation: command=%s, exit_code=%s, content_length=%d',
+                        event.command,
+                        event.exit_code,
+                        len(event.content) if event.content else 0,
+                    )
+
     def _find_attempt(self, attempt_id: str) -> AttemptRecord | None:
         for attempt in self.attempts:
             if attempt.attempt_id == attempt_id:
@@ -344,18 +459,37 @@ class RLMAgent(Agent):
     def _latest_attempt(self) -> AttemptRecord | None:
         return self.attempts[-1] if self.attempts else None
 
-    def _guard_plain_reply(self, actions: list['Action']) -> list['Action']:
-        if len(actions) == 1 and isinstance(actions[0], MessageAction):
-            actions[0].wait_for_response = False
-        return actions
-
     def _queue_system_message(self, tools: list['ChatCompletionToolParam']) -> None:
         sys_msg = SystemMessageAction(
-            content=self.prompt_manager.get_system_message(cli_mode=self.config.cli_mode),
+            content=self.prompt_manager.get_system_message(
+                cli_mode=self.config.cli_mode,
+                rlm_attempt_phase=(self.current_phase == Phase.ATTEMPT),
+            ),
             tools=tools,
             agent_class=self.__class__.__name__,
         )
         self.pending_actions.append(sys_msg)
+
+    def _queue_repo_reset(self) -> None:
+        if not self.reset_repo_cmd:
+            logger.debug('No reset_repo_cmd configured, skipping repository reset')
+            return
+        # Expand shell variables in Python to avoid expansion issues
+        original_cmd = self.reset_repo_cmd
+        reset_cmd = self._expand_shell_vars(self.reset_repo_cmd)
+        logger.info(
+            'Resetting repository before ATTEMPT: original=`%s`, expanded=`%s`, cmd_length=%d',
+            original_cmd,
+            reset_cmd,
+            len(reset_cmd),
+        )
+        # Use blocking=False to match evaluation script pattern
+        # This uses NO_CHANGE_TIMEOUT mechanism instead of waiting indefinitely for PS1
+        reset_action = CmdRunAction(command=reset_cmd, hidden=True)
+        # Use 120 second timeout (git reset can be slow on large repos) with blocking=False
+        # to allow NO_CHANGE_TIMEOUT to trigger if the command produces no output
+        reset_action.set_hard_timeout(120, blocking=False)
+        self.pending_actions.append(reset_action)
 
     def _render_characterize_transition(
         self, attempt_id: str, attempt_summary: str
@@ -374,20 +508,46 @@ class RLMAgent(Agent):
             )
 
     def _transition_to_phase(
-        self, next_phase: Phase, transition_messages: list[str] | None = None
+        self, next_phase: Phase, transition_messages: list[str] | None = None, state: State | None = None
     ) -> None:
+        old_phase = self.current_phase
         self.current_phase = next_phase
+        # Update state.extra_data immediately if state is provided
+        # This ensures external code (e.g., evaluation scripts) can read the current phase
+        if state is not None:
+            state.extra_data['rlm_phase'] = self.current_phase.value
+
+        # Reset reminder counter when transitioning away from ATTEMPT phase
+        if old_phase == Phase.ATTEMPT and next_phase != Phase.ATTEMPT:
+            self._attempt_phase_step_count = 0
+        # Reset counter when entering ATTEMPT phase
+        elif old_phase != Phase.ATTEMPT and next_phase == Phase.ATTEMPT:
+            self._attempt_phase_step_count = 0
+
+        # Check if the prompt template changes between phases
+        old_prompt = self.phase_prompts.get(old_phase)
+        new_prompt = self.phase_prompts.get(next_phase)
+        prompt_changed = old_prompt != new_prompt
+
         self._set_phase_prompt(next_phase)
         tools, _ = self._phase_tools_and_names()
         self.tools = tools
+
         if transition_messages:
             for msg in transition_messages:
                 self.pending_actions.append(
                     MessageAction(content=msg, wait_for_response=False)
                 )
-        self._queue_system_message(tools)
 
-    def _handle_finish_attempt(self, action: FinishAttemptAction) -> None:
+        # Only create a new SystemMessageAction if the prompt template actually changed
+        # and we're NOT transitioning to REFLECT phase (which uses _build_reflect_messages)
+        # For CHARACTERIZE phase (which uses the same prompt as ATTEMPT), we keep the
+        # existing system message and just update the tools, preserving conversation context
+        # For REFLECT phase, _build_reflect_messages() creates its own system message
+        if prompt_changed and next_phase != Phase.REFLECT:
+            self._queue_system_message(tools)
+
+    def _handle_finish_attempt(self, action: FinishAttemptAction, state: State | None = None) -> None:
         attempt_id = f'attempt-{len(self.attempts) + 1}'
         record = AttemptRecord(
             attempt_id=attempt_id,
@@ -397,19 +557,27 @@ class RLMAgent(Agent):
         )
         self.attempts.append(record)
 
+        # Reset reminder counter when finish is called
+        self._attempt_phase_step_count = 0
+
         self.pending_actions.append(action)
 
         if self.extract_patch_cmd:
-            # Run in the runtime via CmdRunAction but keep it hidden from the trajectory
+            # Run in the runtime via CmdRunAction (filtered from LLM messages but visible to agent processing)
+            # Expand shell variables in Python to avoid expansion issues
+            extract_cmd = self._expand_shell_vars(self.extract_patch_cmd)
             self._pending_extract_attempt_id = attempt_id
-            self._pending_extract_command = self.extract_patch_cmd
-            self.pending_actions.append(
-                CmdRunAction(command=self.extract_patch_cmd, hidden=True)
-            )
+            self._pending_extract_command = extract_cmd
+            # Use blocking=False to match evaluation script pattern
+            # This uses NO_CHANGE_TIMEOUT mechanism instead of waiting indefinitely for PS1
+            extract_action = CmdRunAction(command=extract_cmd, hidden=False)
+            # Use 120 second timeout (git diff can be large) with blocking=False
+            extract_action.set_hard_timeout(120, blocking=False)
+            self.pending_actions.append(extract_action)
             logger.info(
-                'Extracting patch for %s via `%s` (hidden command).',
+                'Extracting patch for %s via `%s`.',
                 attempt_id,
-                self.extract_patch_cmd,
+                extract_cmd,
             )
         else:
             logger.info(
@@ -421,11 +589,11 @@ class RLMAgent(Agent):
             attempt_id=attempt_id, attempt_summary=action.message
         )
         self._transition_to_phase(
-            Phase.CHARACTERIZE, transition_messages=[transition_msg]
+            Phase.CHARACTERIZE, transition_messages=[transition_msg], state=state
         )
 
     def _handle_finish_characterization(
-        self, action: FinishCharacterizationAction
+        self, action: FinishCharacterizationAction, state: State | None = None
     ) -> None:
         attempt = self._latest_attempt()
         if attempt:
@@ -455,9 +623,10 @@ class RLMAgent(Agent):
                 'Completed attempt characterizations:\n' + '\n'.join(summaries),
                 reflect_intro,
             ],
+            state=state,
         )
 
-    def _handle_finish_reflection(self, action: FinishReflectionAction) -> None:
+    def _handle_finish_reflection(self, action: FinishReflectionAction, state: State | None = None) -> None:
         attempt = self._latest_attempt()
         if attempt:
             attempt.reflection_plan = action.final_message
@@ -470,11 +639,12 @@ class RLMAgent(Agent):
             return
 
         self.iteration_index += 1
+        self._queue_repo_reset()
         todo_msg = (
             f'Plan recorded. Starting ATTEMPT {self.iteration_index}/{self.rlm_max_iterations or "?"}. '
             'Proceed with tools and call finish when done.'
         )
-        self._transition_to_phase(Phase.ATTEMPT, transition_messages=[todo_msg])
+        self._transition_to_phase(Phase.ATTEMPT, transition_messages=[todo_msg], state=state)
 
     def _handle_submit_attempt_as_final(
         self, action: SubmitAttemptAsFinalAction
@@ -508,14 +678,33 @@ class RLMAgent(Agent):
             if attempt.validation:
                 line += f'\n validation: {attempt.validation}'
             lines.append(line)
-        action.content = '\n\n'.join(lines) if lines else 'No attempts available.'
+        content = '\n\n'.join(lines) if lines else 'No attempts available.'
+
+        # If in REFLECT phase and all attempts have been expanded, add a strong reminder
+        if self.current_phase == Phase.REFLECT and len(self._expanded_attempt_ids) >= len(self.attempts):
+            content += (
+                '\n\n⚠️ REMINDER: You have already reviewed all attempts. '
+                'You MUST call `finish_reflection(plan)` NOW with your plan for the next attempt, '
+                'or `submit_attempt_as_final(attempt_id)` if an attempt succeeded. '
+                'Do NOT call browse_previous_attempts or expand_previous_attempt again.'
+            )
+
+        action.content = content
         self.pending_actions.append(action)
 
     def _handle_expand_attempt(self, action: ExpandPreviousAttemptAction) -> None:
         attempt = self._find_attempt(action.attempt_id)
         if attempt is None:
             action.content = f'Attempt {action.attempt_id} not found.'
+        elif action.attempt_id in self._expanded_attempt_ids:
+            # Prevent repeated expansion of the same attempt to avoid loops
+            action.content = (
+                f'Attempt {action.attempt_id} has already been expanded. '
+                f'You have already seen the full details. Please call `finish_reflection` with a plan '
+                f'or `submit_attempt_as_final` if this attempt succeeded.'
+            )
         else:
+            self._expanded_attempt_ids.add(action.attempt_id)
             detail = [
                 attempt.summary_line(),
                 f'Characterization: {attempt.characterization_summary}',
@@ -535,6 +724,31 @@ class RLMAgent(Agent):
             action.content = '\n'.join(detail)
         self.pending_actions.append(action)
 
+    def _expand_shell_vars(self, cmd: str) -> str:
+        """Expand shell variable syntax like ${VAR:-default} in command string."""
+        # Pattern to match ${VAR:-default} syntax
+        pattern = r'\$\{([^:}]+):-([^}]+)\}'
+
+        def replace_var(match):
+            var_name = match.group(1)
+            default_value = match.group(2)
+            # Get value from environment or use default
+            env_value = os.environ.get(var_name)
+            expanded_value = env_value if env_value else default_value
+            return expanded_value
+
+        expanded_cmd = re.sub(pattern, replace_var, cmd)
+
+        # Remove quotes around simple expanded values (like commit hashes)
+        # Pattern: "value" where value is alphanumeric/hex (commit hash)
+        # This handles cases like: git reset --hard "${VAR:-hash}" -> git reset --hard hash
+        # Match quoted strings that are alphanumeric/hex (typical git commit hashes)
+        # Minimum 7 chars (short commit hash) up to 40 chars (full commit hash)
+        quote_pattern = r'"([a-f0-9]{7,40})"'  # Match quoted hex strings (git commit hashes)
+        expanded_cmd = re.sub(quote_pattern, r'\1', expanded_cmd)
+
+        return expanded_cmd
+
     def _apply_best_attempt_and_finish(self, attempt: AttemptRecord) -> None:
         if not attempt.patch:
             raise ValueError(
@@ -544,6 +758,29 @@ class RLMAgent(Agent):
             raise ValueError(
                 'rlm_apply_patch_cmd is required to apply the best attempt.'
             )
+        # Reset repository to clean state before applying patch
+        # Use git reset --hard only (no git clean) for faster, sufficient reset
+        # git clean -fd can be slow and isn't necessary for patch application
+        if self.reset_repo_cmd:
+            # Extract just the git reset part, avoiding git clean
+            reset_cmd = self.reset_repo_cmd.split('&&')[0].strip()
+            if 'git reset --hard' in reset_cmd:
+                # Expand shell variables in Python to avoid expansion issues
+                original_reset_cmd = reset_cmd
+                reset_cmd = self._expand_shell_vars(reset_cmd)
+                logger.info(
+                    'Resetting repository before applying patch: original=`%s`, expanded=`%s`, cmd_length=%d',
+                    original_reset_cmd,
+                    reset_cmd,
+                    len(reset_cmd),
+                )
+                # Use blocking=False to match evaluation script pattern
+                # This uses NO_CHANGE_TIMEOUT mechanism instead of waiting indefinitely for PS1
+                reset_action = CmdRunAction(command=reset_cmd, hidden=True)
+                # Use 120 second timeout (git reset can be slow on large repos) with blocking=False
+                # to allow NO_CHANGE_TIMEOUT to trigger if the command produces no output
+                reset_action.set_hard_timeout(120, blocking=False)
+                self.pending_actions.append(reset_action)
         apply_cmd = self._build_apply_command(attempt.patch)
         self._pending_apply_attempt_id = attempt.attempt_id
         self._pending_apply_command = apply_cmd
@@ -553,7 +790,12 @@ class RLMAgent(Agent):
                 wait_for_response=False,
             )
         )
-        self.pending_actions.append(CmdRunAction(command=apply_cmd))
+        # Use blocking=False to match evaluation script pattern
+        # This uses NO_CHANGE_TIMEOUT mechanism instead of waiting indefinitely for PS1
+        apply_action = CmdRunAction(command=apply_cmd, hidden=False)
+        # Use 120 second timeout (git apply for large patches) with blocking=False
+        apply_action.set_hard_timeout(120, blocking=False)
+        self.pending_actions.append(apply_action)
 
         final_summary = (
             f'Applied attempt {attempt.attempt_id}. '
@@ -603,6 +845,14 @@ class RLMAgent(Agent):
         return completed[-1]
 
     def step(self, state: State) -> 'Action':
+        # Sync current phase to state.extra_data for external phase detection
+        # This allows evaluation scripts and other code to reliably detect the current phase
+        state.extra_data['rlm_phase'] = self.current_phase.value
+
+        # Always process new observations first, even if there are pending actions
+        # This ensures patch extraction observations are processed immediately
+        self._process_new_observations(state)
+
         if self.pending_actions:
             action = self.pending_actions.popleft()
             if action.id != Event.INVALID_ID:
@@ -614,8 +864,6 @@ class RLMAgent(Agent):
                 )
                 action.id = Event.INVALID_ID
             return action
-
-        self._process_new_observations(state)
 
         latest_user_message = state.get_last_user_message()
         if latest_user_message and latest_user_message.content.strip() == '/exit':
@@ -654,6 +902,7 @@ class RLMAgent(Agent):
                 transition_messages=[
                     'No finished attempt to characterize. Return to ATTEMPT and call finish when ready.'
                 ],
+                state=state,
             )
             action = self.pending_actions.popleft()
             if action.id != Event.INVALID_ID:
@@ -673,6 +922,7 @@ class RLMAgent(Agent):
             self._transition_to_phase(
                 Phase.ATTEMPT,
                 transition_messages=['No attempts yet. Start ATTEMPT and call finish.'],
+                state=state,
             )
             action = self.pending_actions.popleft()
             if action.id != Event.INVALID_ID:
@@ -692,6 +942,28 @@ class RLMAgent(Agent):
         else:
             messages = self._get_messages(condensed_history, initial_user_message)
 
+        # Track steps in ATTEMPT phase and inject reminder if needed
+        if self.current_phase == Phase.ATTEMPT:
+            self._attempt_phase_step_count += 1
+
+            # Inject reminder if interval reached and reminders are enabled
+            if (
+                self._reminder_step_interval > 0
+                and self._attempt_phase_step_count % self._reminder_step_interval == 0
+            ):
+                reminder_msg = (
+                    f"⚠️ REMINDER: You've taken {self._attempt_phase_step_count} steps in ATTEMPT phase. "
+                    f"If you've run ANY test/workload and seen results (even if they show improvement), "
+                    f"you MUST call `finish` NOW. Do NOT continue optimizing - ONE attempt = ONE test run + finish. "
+                    f"The REFLECT phase will handle planning further improvements."
+                )
+                # Inject reminder as a user message in the messages list
+                reminder_message = Message(
+                    role='user',
+                    content=[TextContent(text=reminder_msg)],
+                )
+                messages.append(reminder_message)
+
         tools, allowed_tool_names = self._phase_tools_and_names()
         params: dict = {
             'messages': messages,
@@ -710,16 +982,15 @@ class RLMAgent(Agent):
             mcp_tool_names=list(self.mcp_tools.keys()),
             allowed_tool_names=allowed_tool_names,
         )
-        actions = self._guard_plain_reply(actions)
         logger.debug(f'Actions after response_to_actions: {actions}')
 
         for action in actions:
             if isinstance(action, FinishAttemptAction):
-                self._handle_finish_attempt(action)
+                self._handle_finish_attempt(action, state=state)
             elif isinstance(action, FinishCharacterizationAction):
-                self._handle_finish_characterization(action)
+                self._handle_finish_characterization(action, state=state)
             elif isinstance(action, FinishReflectionAction):
-                self._handle_finish_reflection(action)
+                self._handle_finish_reflection(action, state=state)
             elif isinstance(action, SubmitAttemptAsFinalAction):
                 self._handle_submit_attempt_as_final(action)
             elif isinstance(action, BrowsePreviousAttemptsAction):

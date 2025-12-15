@@ -214,6 +214,7 @@ async def run_controller(
 
     def on_event(event: Event) -> None:
         if isinstance(event, AgentStateChangedObservation):
+            print(f'Agent state changed to: {event.agent_state}')
             if event.agent_state == AgentState.AWAITING_USER_INPUT:
                 if exit_on_message:
                     message = '/exit'

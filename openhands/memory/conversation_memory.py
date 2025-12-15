@@ -300,6 +300,9 @@ class ConversationMemory:
                 action.tool_call_metadata = None
             if role not in ('user', 'system', 'assistant', 'tool'):
                 raise ValueError(f'Invalid role: {role}')
+            # Skip if thought is empty
+            if not action.thought or not action.thought.strip():
+                return []
             return [
                 Message(
                     role=role,  # type: ignore[arg-type]

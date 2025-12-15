@@ -426,20 +426,12 @@ def response_to_actions(
             )
             actions.append(action)
     else:
-        # Gemini occasionally returns a "stop" with no tool calls. If we turn that
-        # into a wait_for_response message, the controller will park the agent in
-        # AWAITING_USER_INPUT and headless runs will hang. Instead, nudge the model to
-        # reply again without blocking on user input.
-        if not getattr(assistant_msg, 'tool_calls', None):
-            nudge = (
-                'Please continue the task and respond with a tool call.'
+        actions.append(
+            MessageAction(
+                content=str(assistant_msg.content) if assistant_msg.content else '',
+                wait_for_response=True,
             )
-            actions.append(
-                MessageAction(
-                    content=nudge,
-                    wait_for_response=False,  # keep agent running; triggers another LLM step
-                )
-            )
+        )
 
     # Add response id to actions
     # This will ensure we can match both actions without tool calls (e.g. MessageAction)

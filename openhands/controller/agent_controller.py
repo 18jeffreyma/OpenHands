@@ -476,7 +476,17 @@ class AgentController:
         asyncio.get_event_loop().run_until_complete(self._on_event(event))
 
     async def _on_event(self, event: Event) -> None:
-        if hasattr(event, 'hidden') and event.hidden:
+        is_hidden = hasattr(event, 'hidden') and event.hidden
+
+        # For hidden observations, we still need to clear pending action,
+        # but we don't add to history or step the agent
+        if is_hidden:
+            if isinstance(event, Observation):
+                # Clear pending action if this observation corresponds to it
+                if self._pending_action and self._pending_action.id == event.cause:
+                    self._pending_action = None
+                    # After clearing pending action, step the agent to process next queued action
+                    await self._step_with_exception_handling()
             return
 
         self.state_tracker.add_history(event)
@@ -528,7 +538,9 @@ class AgentController:
             await self.set_agent_state_to(AgentState.REJECTED)
         elif hasattr(action, 'action') and getattr(action, 'action', None) == ActionType.FINISH_ATTEMPT:
             # Non-terminal finish used by RLM to mark attempt completion; keep running.
-            self.event_stream.add_event(action, EventSource.AGENT)
+            # The action is already in the event stream (that's why this callback was triggered),
+            # so we don't need to add it again - just let the agent continue.
+            pass
         elif isinstance(action, LoopRecoveryAction):
             await self._handle_loop_recovery_action(action)
 
